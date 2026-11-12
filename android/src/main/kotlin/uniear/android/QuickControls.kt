@@ -51,10 +51,6 @@ internal object QuickControls {
     fun notification(context: Context, view: HeadsetView, token: String, connecting: Boolean): Notification {
         val manager = requireNotNull(context.getSystemService(NotificationManager::class.java))
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "耳机控制会话", NotificationManager.IMPORTANCE_LOW))
-        val showControls = Surface.NOTIFICATION.enabled(context)
-        val text = if (showControls && view.ready) {
-            listOfNotNull(view.mode?.label(), view.battery.label()).joinToString(" · ")
-        } else if (view.ready) "耳机控制会话正在运行" else "正在连接耳机…"
         val builder = Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_headphones)
             .setOnlyAlertOnce(true)
@@ -66,6 +62,10 @@ internal object QuickControls {
             val cancel = controlIntent(context, Surface.LIVE_UPDATE, token, CANCEL_CONNECTION)
             return LiveUpdates.connectionNotification(builder, view, cancel)
         }
+        val showControls = Surface.NOTIFICATION.enabled(context)
+        val text = if (showControls && view.ready) {
+            listOfNotNull(view.mode?.label(), view.battery.label()).joinToString(" · ")
+        } else if (view.ready) "耳机控制会话正在运行" else "正在连接耳机…"
         builder.setContentTitle(if (showControls) view.model ?: "UniEar" else "UniEar")
             .setContentText(text)
         if (showControls && view.ready) {

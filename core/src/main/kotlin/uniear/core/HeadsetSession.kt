@@ -7,6 +7,7 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit.MILLISECONDS
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 data class Headset(val identity: EarbudIdentity, val advertisement: GattPeerIdentity? = null) {
     val address: String get() = requireNotNull(identity.deviceAddress)
@@ -30,6 +31,14 @@ fun GattPeerSelection.CompanionDevice.matchesPeer(
 interface HeadsetRadio {
     fun discover(): List<Headset>
     fun open(headset: Headset, spec: EarbudTransportSpec): HeadsetLink
+
+    fun cachedSystemBattery(headset: Headset): Int? = null
+
+    fun observeSystemProfile(
+        headset: Headset,
+        onBatteryChanged: (Int?) -> Unit,
+        onDisconnected: () -> Unit,
+    ): Closeable? = null
 }
 
 interface HeadsetLink : Closeable {
@@ -78,19 +87,31 @@ class HeadsetSession(
     }.apply { removeOnCancelPolicy = true }
     private var adapter: EarbudAdapter? = null
     @Volatile private var link: HeadsetLink? = null
+    private val systemObserver = AtomicReference<Closeable?>()
+    private var systemBattery: Int? = null
+    private var systemOnly = false
+    private var status = "正在识别耳机…"
     private var endpoint: String? = null
     private var candidate = 0
     private var replacements = 0
     private var ready = false
+    private var ended = false
     private var deadline: ScheduledFuture<*>? = null
     private val queries = mutableMapOf<String, ScheduledFuture<*>>()
     private var lastWrite = Long.MIN_VALUE
     private val failures = mutableListOf<String>()
     private val attemptedAdapters = mutableSetOf<String>()
+    private val controlApps = linkedSetOf<ControlAppSpec>()
 
     init {
         enqueue {
             adapter = EarbudAdapterRegistry.forIntegration(headset.identity)
+            if (adapter == null) {
+                publish("此设备由系统蓝牙管理", ended = true)
+                return@enqueue
+            }
+            observeSystemProfile()
+            refreshSystemBattery()
             connectNext()
         }
     }
@@ -99,10 +120,41 @@ class HeadsetSession(
 
     fun refresh() = control(StandardControlRequest.Refresh)
 
+    private fun observeSystemProfile() {
+        val observer = runCatching {
+            radio.observeSystemProfile(headset, { level ->
+                enqueue {
+                    if (setSystemBattery(level)) publish(status)
+                }
+            }, {
+                enqueue {
+                    closeLink()
+                    endpoint = null
+                    systemBattery = null
+                    publish("耳机已断开", ended = true)
+                }
+            })
+        }.getOrNull()
+        systemObserver.set(observer)
+        if (stopped.get()) systemObserver.getAndSet(null)?.let { runCatching { it.close() } }
+    }
+
+    private fun refreshSystemBattery(): Boolean = runCatching { radio.cachedSystemBattery(headset) }
+        .getOrNull()?.takeIf { it in 0..100 }?.let(::setSystemBattery) ?: false
+
+    private fun setSystemBattery(level: Int?): Boolean {
+        val valid = level?.takeIf { it in 0..100 }
+        if (systemBattery == valid) return false
+        systemBattery = valid
+        val current = adapter
+        current?.onSystemBatteryChanged(valid)
+        return systemOnly || current?.effectiveBatterySource() == BatterySource.SYSTEM_AGGREGATE
+    }
+
     private fun enqueue(action: () -> Unit) {
         if (!stopped.get()) {
             try {
-                worker.execute { if (!stopped.get()) action() }
+                worker.execute { if (!stopped.get() && !ended) action() }
             } catch (_: java.util.concurrent.RejectedExecutionException) {
                 // Close can race a Bluetooth callback.
             }
@@ -110,11 +162,11 @@ class HeadsetSession(
     }
 
     private fun connectNext() {
-        val current = adapter
-        if (current == null || !current.privateProtocolRequired) {
-            publish(failures.distinct().joinToString("\n").ifBlank {
-                "此设备没有匹配的专有控制协议"
-            }, ended = true)
+        val current = adapter ?: return
+        if (stopped.get()) return
+        controlApps.addAll(current.controlApps)
+        if (!current.privateProtocolRequired) {
+            useSystemProfile()
             return
         }
         attemptedAdapters.add(current.id)
@@ -124,6 +176,7 @@ class HeadsetSession(
             publish("正在连接…")
             try {
                 current.resetProtocolSession()
+                current.onSystemBatteryChanged(systemBattery)
                 val opened = radio.open(headset, spec)
                 link = opened
                 if (stopped.get()) {
@@ -147,7 +200,15 @@ class HeadsetSession(
             connectNext()
             return
         }
-        publish(failures.distinct().joinToString("\n").ifBlank { "没有可用的控制通道" }, ended = true)
+        useSystemProfile()
+    }
+
+    private fun useSystemProfile() {
+        endpoint = null
+        systemOnly = true
+        ready = true
+        val summary = if (failures.isEmpty()) "系统蓝牙" else "系统蓝牙 · 专有控制不可用"
+        publish((listOf(summary) + failures.distinct()).joinToString("\n"))
     }
 
     private fun begin(current: EarbudAdapter, opened: HeadsetLink) {
@@ -192,9 +253,9 @@ class HeadsetSession(
                 is HandshakeResult.Replace -> replace(opened, handshake)
                 else -> Unit
             }
-            if (adapter === current) {
+            if (adapter === current && link === opened) {
                 scheduleEffects(current, opened, result.effects)
-                if (result.stateChanged && ready) publish("已连接")
+                if (result.stateChanged && ready && result.handshake != HandshakeResult.Ready) publish(status)
             }
         } catch (error: Exception) {
             fail(opened, error.message ?: "处理耳机响应失败")
@@ -207,6 +268,7 @@ class HeadsetSession(
         deadline?.cancel(false)
         ready = false
         adapter = replacement.adapter
+        controlApps.addAll(replacement.adapter.controlApps)
         when (replacement.activation) {
             AdapterActivation.KEEP_CHANNEL_READY -> markReady()
             AdapterActivation.RESTART_ON_CURRENT_CHANNEL -> {
@@ -229,8 +291,15 @@ class HeadsetSession(
 
     fun control(request: ControlRequest) = enqueue {
         val current = adapter ?: return@enqueue
+        if (!ready) return@enqueue
+        if (request === StandardControlRequest.Refresh &&
+            (systemOnly || current.effectiveBatterySource() == BatterySource.SYSTEM_AGGREGATE)
+        ) {
+            if (refreshSystemBattery()) publish(status)
+        }
+        if (systemOnly) return@enqueue
         val opened = link ?: return@enqueue
-        if (!ready || !current.supportsControl(request)) return@enqueue
+        if (!current.supportsControl(request)) return@enqueue
         val policy = current.controlPolicy(request)
         val now = System.nanoTime()
         if (lastWrite != Long.MIN_VALUE &&
@@ -241,7 +310,7 @@ class HeadsetSession(
                 send(opened, result.commands, policy.commandGapMs)
                 lastWrite = System.nanoTime()
                 scheduleEffects(current, opened, current.controlWritten(request))
-                publish("已连接")
+                publish(status)
                 if (result.readback.isNotEmpty()) {
                     Thread.sleep(policy.readbackDelayMs)
                     send(opened, result.readback, 120)
@@ -311,24 +380,32 @@ class HeadsetSession(
 
     private fun publish(status: String, ended: Boolean = false) {
         if (stopped.get()) return
+        this.status = status
+        this.ended = ended
         val current = adapter
         val state = current?.runtimeState()
-        val modes = if (ready && current != null) {
+        val privateReady = ready && !systemOnly
+        val modes = if (privateReady && current != null) {
             current.effectiveSupportedNoiseModes().filter {
                 current.supportsControl(StandardControlRequest.SetNoiseMode(it))
             }.toSet()
         } else emptySet()
+        val battery = if (!ended && (systemOnly || current?.effectiveBatterySource() == BatterySource.SYSTEM_AGGREGATE)) {
+            EarbudBattery.fromSystemAggregate(systemBattery)
+        } else if (privateReady) state?.battery ?: EarbudBattery() else EarbudBattery()
         onView(HeadsetView(
-            status, current?.displayName, endpoint, state?.battery ?: EarbudBattery(),
-            state?.noiseMode, modes, ready, ended,
-            if (ready) current?.controlGroups().orEmpty() else emptyList(),
-            current?.controlApps.orEmpty(),
+            status, headset.identity.deviceName.takeIf { current?.resolution == AdapterResolution.STANDARD }
+                ?: current?.displayName, endpoint, battery,
+            state?.noiseMode?.takeIf { it in modes }, modes, ready, ended,
+            if (privateReady) current?.controlGroups().orEmpty() else emptyList(),
+            controlApps.toList(),
         ))
     }
 
     override fun close() {
         if (stopped.compareAndSet(false, true)) {
             worker.shutdownNow()
+            systemObserver.getAndSet(null)?.let { runCatching { it.close() } }
             link?.let { runCatching { it.close() } }
         }
     }

@@ -24,8 +24,11 @@ internal fun EarbudAdapter.controlGroups(): List<ControlGroup> = buildList {
     val features = runtimeState().features
     features.get<HuaweiAncLevelFeatureState>()?.let { state ->
         val labels = listOf("普通", "轻度", "深度", "动态", "人声增强", "普通")
-        options("降噪与通透强度", state.supported.sortedBy { it.ordinal }, state.current,
-            { labels[it.ordinal] }, request = { HuaweiControlRequest.SetAncLevel(it) })
+        val levels = state.supported.sortedBy { it.ordinal }
+        for ((mode, title) in listOf(NoiseMode.ANC to "降噪强度", NoiseMode.TRANSPARENCY to "通透强度")) {
+            options(title, levels.filter { it.domainNoiseMode() == mode }, state.current,
+                { labels[it.ordinal] }, request = { HuaweiControlRequest.SetAncLevel(it) })
+        }
     }
     features.get<HonorAncDepthFeatureState>()?.let { state ->
         val labels = listOf("智能", "轻度", "中度", "深度")
@@ -65,13 +68,13 @@ internal fun EarbudAdapter.controlGroups(): List<ControlGroup> = buildList {
             toggle(title, enabled) { SamsungControlRequest.SetTouchGesture(gesture, it) }
         }
         toggle("双击耳机边缘", state.outsideDoubleTapEnabled, { SamsungControlRequest.SetOutsideDoubleTap(it) })
+        val actions = listOf("语音助手", "切换降噪", "音量", "Spotify")
+        val cycles = listOf("降噪 / 通透", "降噪 / 关闭", "通透 / 关闭")
         for (side in SamsungTouchSide.entries) {
             val left = side == SamsungTouchSide.LEFT
             val sideLabel = if (left) "左耳" else "右耳"
             val action = if (left) state.displayedLeftAction else state.displayedRightAction
             val cycle = if (left) state.displayedLeftCycle else state.displayedRightCycle
-            val actions = listOf("语音助手", "切换降噪", "音量", "Spotify")
-            val cycles = listOf("降噪 / 通透", "降噪 / 关闭", "通透 / 关闭")
             options("${sideLabel}长按动作", SamsungTouchAction.entries, action,
                 { actions[it.ordinal] }, confirmation(if (left) state.leftActionPending else state.rightActionPending,
                     state.touchHoldActionsTimedOut)) { SamsungControlRequest.SetTouchHoldAction(side, it) }
@@ -82,8 +85,29 @@ internal fun EarbudAdapter.controlGroups(): List<ControlGroup> = buildList {
                 }
             }
         }
+        options("双耳长按动作（左耳 · 右耳）", orderedPairs(SamsungTouchAction.entries),
+            state.displayedLeftAction to state.displayedRightAction,
+            { (left, right) -> "${actions[left.ordinal]} · ${actions[right.ordinal]}" },
+            confirmation(state.touchHoldActionsPending, state.touchHoldActionsTimedOut)) { (left, right) ->
+            SamsungControlRequest.SetTouchHoldActions(left, right)
+        }
+        val leftCycle = state.displayedLeftCycle
+        val rightCycle = state.displayedRightCycle
+        if (leftCycle != null && rightCycle != null &&
+            state.displayedLeftAction == SamsungTouchAction.NOISE_CONTROL &&
+            state.displayedRightAction == SamsungTouchAction.NOISE_CONTROL
+        ) {
+            options("双耳长按切换范围（左耳 · 右耳）", orderedPairs(SamsungNoiseCycle.entries),
+                leftCycle to rightCycle, { (left, right) -> "${cycles[left.ordinal]} · ${cycles[right.ordinal]}" },
+                confirmation(state.touchHoldCyclesPending, state.touchHoldCyclesTimedOut)) { (left, right) ->
+                SamsungControlRequest.SetTouchHoldNoiseCycles(left, right)
+            }
+        }
     }
 }
+
+private fun <T> orderedPairs(values: List<T>): List<Pair<T, T>> =
+    values.flatMap { left -> values.map { right -> left to right } }
 
 private fun confirmation(pending: Boolean, timedOut: Boolean): String? = when {
     pending -> "等待耳机确认"

@@ -459,10 +459,25 @@ class MainActivity : Activity() {
                 for (group in view.controls) {
                     addView(text(group.title, 15, bold = true).apply { setPadding(0, dp(12), 0, 0) })
                     group.hint?.let { addView(text(it, 13, muted)) }
-                    group.choices.chunked(2).forEach { choices ->
-                        addView(row(*choices.map { choice ->
-                            action(choice.label, choice.selected) { ControlState.command(choice.request) }
-                        }.toTypedArray()))
+                    if (group.choices.size > 6) {
+                        val selected = group.choices.indexOfFirst { it.selected }
+                        val summary = group.choices.getOrNull(selected)?.label ?: "选择设置"
+                        addView(action(summary) {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle(group.title)
+                                .setSingleChoiceItems(group.choices.map { it.label }.toTypedArray(), selected) { dialog, which ->
+                                    ControlState.command(group.choices[which].request)
+                                    dialog.dismiss()
+                                }
+                                .setNegativeButton("取消", null)
+                                .show()
+                        })
+                    } else {
+                        group.choices.chunked(2).forEach { choices ->
+                            addView(row(*choices.map { choice ->
+                                action(choice.label, choice.selected) { ControlState.command(choice.request) }
+                            }.toTypedArray()))
+                        }
                     }
                 }
             })
