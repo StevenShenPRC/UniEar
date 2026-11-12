@@ -16,7 +16,7 @@ import uniear.core.HeadsetView
 import java.util.UUID
 
 internal enum class Surface(val key: String) {
-    NOTIFICATION("notification"), TILE("tile"), WIDGET("widget"), CAPSULE("capsule");
+    NOTIFICATION("notification"), TILE("tile"), WIDGET("widget"), CAPSULE("capsule"), LIVE_UPDATE("live_update");
 
     fun enabled(context: Context): Boolean =
         context.getSharedPreferences("quick-controls", Context.MODE_PRIVATE).getBoolean(key, false)
@@ -90,6 +90,7 @@ internal object ControlState {
 class ControlSessionService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var session: HeadsetSession? = null
+    private var connecting = false
     private var foreground = false
     private var foregroundLocation = false
     private val capsule by lazy { FloatingControls(this) }
@@ -110,6 +111,7 @@ class ControlSessionService : Service() {
         }
         val generation = UUID.randomUUID().toString()
         token = generation
+        connecting = true
         ControlState.service = this
         try {
             val initial = HeadsetView("正在连接…", model = headset.identity.deviceName)
@@ -119,6 +121,7 @@ class ControlSessionService : Service() {
                 main.post {
                     if (token == generation) {
                         if (view.ended) finish(view) else {
+                            if (view.ready) connecting = false
                             ControlState.publish(this, view)
                             automation.onHeadsetChanged(view)
                         }
@@ -136,7 +139,7 @@ class ControlSessionService : Service() {
     internal fun command(request: ControlRequest) { session?.control(request) }
 
     private fun enterForeground(view: HeadsetView, generation: String, location: Boolean) {
-        val notice = QuickControls.notification(this, view, generation)
+        val notice = QuickControls.notification(this, view, generation, connecting)
         if (Build.VERSION.SDK_INT >= 29) {
             val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
                 (if (location) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
@@ -163,9 +166,15 @@ class ControlSessionService : Service() {
 
     internal fun disconnect() = finish(HeadsetView("已断开控制连接"))
 
+    internal fun cancelConnection(generation: String) {
+        if (connecting && token == generation && Surface.LIVE_UPDATE.enabled(this)) {
+            finish(HeadsetView("已取消控制连接"))
+        }
+    }
+
     internal fun renderSurfaces() {
         val current = token ?: return
-        if (foreground) QuickControls.updateNotification(this, ControlState.view, current)
+        if (foreground) QuickControls.updateNotification(this, ControlState.view, current, connecting)
         capsule.render(ControlState.view)
     }
 
@@ -177,6 +186,7 @@ class ControlSessionService : Service() {
 
     private fun closeSession() {
         token = null
+        connecting = false
         automation.close()
         session?.close()
         session = null

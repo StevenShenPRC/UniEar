@@ -22,11 +22,12 @@ UniEar 是一个普通应用，用于读取蓝牙耳机的电量和降噪状态�
 | 入口 | 用法 |
 | --- | --- |
 | 通知中心菜单 | 折叠状态提供降噪、通透、关闭和抗风噪按钮；设备不支持的按钮不可点击。展开可查看型号、电量、当前模式与控制通道 |
-| 控制中心磁贴 | 添加“耳机模式”，点按轮换当前耳机支持的模式 |
+| 控制中心磁贴 | 添加“耳机模式”，短按轮换耳机支持的模式，长按打开 UniEar |
 | 桌面小组件 | 添加 UniEar 小组件，查看电量并点按对应模式 |
 | UniEar 悬浮胶囊 | 授予显示在其他应用上层的权限，点按胶囊展开模式列表 |
+| 系统实况窗 | Android 16 起可在连接耳机期间显示连接进度，可直接取消。在设置中独立启用 |
 
-快捷入口使用同一条控制会话，断开后停止发送控制命令。华为实况窗、OPPO 流体云、vivo 原子岛和小米超级岛的原生接入需要对应厂商支持和验证。UniEar 悬浮胶囊是 Android 悬浮窗实现。
+快捷入口使用同一条控制会话，断开后停止发送控制命令。系统实况窗使用 Android Live Updates，显示效果由系统和用户的通知设置决定。连接结束后回到常规通知。支持 Android Live Updates 的 ColorOS 16 固件可走同一接口。华为、vivo 和小米各自的专有实况窗接口需要厂商接入和真机验证。
 
 在「设置 → 网络自动化」为移动网络和不同 Wi-Fi 名称配置降噪模式。规则只在 UniEar 已连接耳机时运行，网络稳定后按当前网络执行一次。Wi-Fi 规则需要系统提供 SSID，需要精确位置权限和定位开关。没有对应规则、读不到 Wi-Fi 名称或耳机不支持目标模式时，保持耳机现状。
 
@@ -42,13 +43,15 @@ python -m pip install -r desktop/requirements.txt
 
 在 Linux 或 macOS 上将 `python` 替换为 `python3`，将 `.\gradlew.bat` 替换为 `sh ./gradlew`。用 `:desktop:installDist` 代替 `:desktop:run` 可生成 `desktop/build/install/desktop/`，启动脚本在该目录的 `bin/` 下。桌面版从 PATH 查找 Python，使用虚拟环境时可通过 `UNIEAR_PYTHON` 指定解释器。
 
-Android 构建还需要 Android SDK Platform 34 和 Build Tools 36.0.0。配置 `ANDROID_HOME` 或 `local.properties` 中的 `sdk.dir` 后运行：
+Android 构建还需要 Android SDK Platform 36 和 Build Tools 36.0.0。配置 `ANDROID_HOME` 或 `local.properties` 中的 `sdk.dir` 后运行：
 
 ```powershell
 .\gradlew.bat :android:assembleDebug
 ```
 
 APK 输出路径为 `android/build/outputs/apk/debug/android-debug.apk`。
+
+GitHub Actions 使用固定签名发布 APK 时，需要在仓库的 Actions Secrets 中设置 `UNIEAR_KEYSTORE_BASE64` 和 `UNIEAR_KEYSTORE_PASSWORD`。密钥库使用 PKCS#12 格式，密钥别名为 `uniear`。工作流会对发布 APK 签名并校验签名证书的 SHA-256 指纹。两个 Secrets 都未设置时，产物是临时签名的 `UniEar-android-debug`。固定签名的产物名为 `UniEar-android-release`。
 
 ## 更新品牌适配
 

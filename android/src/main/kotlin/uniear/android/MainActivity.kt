@@ -68,9 +68,9 @@ class MainActivity : Activity() {
         dark = getPreferences(MODE_PRIVATE).getBoolean("dark_mode", false)
         setTheme(if (dark) R.style.UniEarDarkTheme else R.style.UniEarTheme)
         super.onCreate(savedInstanceState)
-        val layout = column().apply {
+        val root = column().apply {
             setBackgroundColor(backgroundColor)
-            setPadding(dp(20), dp(14), dp(20), dp(24))
+            setPadding(dp(20), dp(14), dp(20), 0)
         }
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         val logo = ImageView(this).apply {
@@ -81,10 +81,11 @@ class MainActivity : Activity() {
         }
         header.addView(logo, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(12) })
         header.addView(text("UniEar", 28, bold = true))
-        layout.addView(header)
+        root.addView(header)
         deviceTab = action("设备") { selectPage(false) }
         settingsTab = action("设置") { selectPage(true) }
-        layout.addView(row(deviceTab, settingsTab))
+        root.addView(row(deviceTab, settingsTab))
+        val layout = column().apply { setPadding(0, 0, 0, dp(24)) }
         devicePage = column().apply { buildDevicePage(this) }
         settingsPage = column().apply { buildSettingsPage(this) }
         layout.addView(devicePage)
@@ -93,7 +94,8 @@ class MainActivity : Activity() {
             isFillViewport = true
             addView(layout)
         }
-        setContentView(scroll)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        setContentView(root)
         selectPage(savedInstanceState?.getBoolean("settings") == true)
         (lastNonConfigurationInstance as? DeviceSelection)?.let { showHeadsets(it.devices, it.address) }
     }
@@ -147,6 +149,7 @@ class MainActivity : Activity() {
                 addView(it)
             }
             battery = text("电量未知", 15, accent).also { addView(it) }
+            addView(text("已连接的蓝牙耳机", 14, muted).apply { setPadding(0, dp(12), 0, dp(4)) })
             devices = Spinner(this@MainActivity).also {
                 it.minimumHeight = dp(48)
                 it.contentDescription = "选择蓝牙耳机"
@@ -160,10 +163,12 @@ class MainActivity : Activity() {
             connect = action("连接", primary = true) {
                 if (ControlState.busy) ControlState.service?.disconnect() else withBluetooth(true, ::connect)
             }
-            addView(row(scan, connect))
+            addView(scan)
+            addView(connect)
         })
         page.addView(card().apply {
             addView(text("噪声控制", 19, bold = true))
+            addView(text("选择耳机支持的模式", 14, muted))
             modes = NoiseMode.entries.associateWith { mode ->
                 action(mode.label()) { ControlState.command(StandardControlRequest.SetNoiseMode(mode)) }
             }
@@ -215,7 +220,13 @@ class MainActivity : Activity() {
             addView(text("快捷控制", 21, bold = true))
             addView(text("先在设备页连接耳机，再从各入口切换已支持的模式。", 14, muted))
             addSetting(this, Surface.NOTIFICATION, "通知中心菜单", "折叠时可切换模式，展开后查看耳机信息。")
-            addSetting(this, Surface.TILE, "控制中心磁贴", "点按轮换模式，未连接时打开 UniEar。")
+            if (LiveUpdates.supported) {
+                addSetting(this, Surface.LIVE_UPDATE, "连接进度实况", "建立耳机控制连接时显示实时进度，连接完成后自动结束。由系统决定是否在状态栏显示。")
+                addView(action("管理实况通知权限") {
+                    if (!LiveUpdates.openSettings(this@MainActivity)) toast("请在系统设置中检查 UniEar 的通知权限。")
+                })
+            }
+            addSetting(this, Surface.TILE, "控制中心磁贴", "点按轮换模式，长按打开 UniEar。")
             addView(action("添加到控制中心") { addTile() })
             addSetting(this, Surface.WIDGET, "桌面小组件", "显示耳机状态和各模式按钮。")
             addView(action("添加到桌面") { pinWidget() })
@@ -315,10 +326,11 @@ class MainActivity : Activity() {
             textSize = 16f
             setTextColor(ink)
             minHeight = dp(48)
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }
             isChecked = surface.enabled(this@MainActivity)
             setOnCheckedChangeListener { _, enabled ->
                 surface.set(this@MainActivity, enabled)
-                if (enabled && surface == Surface.NOTIFICATION) askNotificationPermission()
+                if (enabled && (surface == Surface.NOTIFICATION || surface == Surface.LIVE_UPDATE)) askNotificationPermission()
                 if (enabled && surface == Surface.CAPSULE && !Settings.canDrawOverlays(this@MainActivity)) {
                     overlaySettings()
                 }
@@ -338,7 +350,10 @@ class MainActivity : Activity() {
     private fun updateSettingsStatus() {
         val notes = mutableListOf<String>()
         if (Surface.CAPSULE.enabled(this) && !Settings.canDrawOverlays(this)) notes += "悬浮胶囊等待系统授权。"
-        if (Surface.NOTIFICATION.enabled(this) &&
+        if (LiveUpdates.supported && Surface.LIVE_UPDATE.enabled(this) && !LiveUpdates.canPostPromotedNotifications(this)) {
+            notes += "请在系统设置中允许 UniEar 显示实况通知。"
+        }
+        if ((Surface.NOTIFICATION.enabled(this) || Surface.LIVE_UPDATE.enabled(this)) &&
             getSystemService(android.app.NotificationManager::class.java)?.areNotificationsEnabled() == false) {
             notes += "请在系统设置中允许 UniEar 通知。"
         }
@@ -444,7 +459,7 @@ class MainActivity : Activity() {
                 for (group in view.controls) {
                     addView(text(group.title, 15, bold = true).apply { setPadding(0, dp(12), 0, 0) })
                     group.hint?.let { addView(text(it, 13, muted)) }
-                    group.choices.chunked(3).forEach { choices ->
+                    group.choices.chunked(2).forEach { choices ->
                         addView(row(*choices.map { choice ->
                             action(choice.label, choice.selected) { ControlState.command(choice.request) }
                         }.toTypedArray()))
@@ -512,7 +527,7 @@ class MainActivity : Activity() {
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
     private fun card() = column().apply {
-        setPadding(dp(16), dp(16), dp(16), dp(16))
+        setPadding(dp(18), dp(18), dp(18), dp(18))
         background = shape(cardColor, 22)
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }
     }
@@ -534,11 +549,12 @@ class MainActivity : Activity() {
 
     private fun action(label: String, primary: Boolean = false, run: () -> Unit) =
         Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) }
             text = label
             isAllCaps = false
-            minimumHeight = dp(46)
-            minHeight = dp(46)
-            setPadding(dp(10), dp(3), dp(10), dp(3))
+            minimumHeight = dp(48)
+            minHeight = dp(48)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
             setOnClickListener { run() }
             style(this, primary)
         }
