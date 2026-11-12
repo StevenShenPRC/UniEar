@@ -29,7 +29,7 @@ jobs:
       - name: Check out HyperEars
         run: python3 scripts/hyperears.py checkout
       - name: Test and build the signed APK
-        run: sh ./gradlew --no-daemon :core:test :android:assembleDebug
+        run: sh ./gradlew --no-daemon :core:test :desktop:compileKotlin :android:assembleDebug
       - name: Verify APK signature
         run: |
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose --print-certs \

@@ -28,6 +28,8 @@ private class DesktopApp {
     private val model = JLabel("选择一台耳机")
     private val battery = JLabel("电量未知")
     private val modeButtons = NoiseMode.entries.associateWith { JButton(it.label()) }
+    private val features = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+    private var shownControls: List<ControlGroup> = emptyList()
     private val status = JTextArea(3, 30).apply {
         isEditable = false
         lineWrap = true
@@ -54,7 +56,7 @@ private class DesktopApp {
             }, BorderLayout.EAST)
         }, BorderLayout.CENTER)
         content.add(header, BorderLayout.NORTH)
-        content.add(JPanel(GridLayout(0, 1, 0, 12)).apply {
+        val controls = JPanel(GridLayout(0, 1, 0, 10)).apply {
             add(model.apply { font = font.deriveFont(Font.BOLD, 18f) })
             add(battery)
             add(JPanel(FlowLayout(FlowLayout.LEADING, 7, 0)).apply {
@@ -63,6 +65,10 @@ private class DesktopApp {
                 }
                 add(refresh)
             })
+        }
+        content.add(JPanel(BorderLayout(0, 12)).apply {
+            add(controls, BorderLayout.NORTH)
+            add(JScrollPane(features).apply { border = BorderFactory.createEmptyBorder() }, BorderLayout.CENTER)
         }, BorderLayout.CENTER)
         content.add(JScrollPane(status), BorderLayout.SOUTH)
         frame.contentPane = content
@@ -81,7 +87,7 @@ private class DesktopApp {
         }
         refresh.addActionListener { session?.refresh() }
         render(HeadsetView("扫描已配对耳机和附近的蓝牙设备。"))
-        frame.minimumSize = Dimension(650, 345)
+        frame.minimumSize = Dimension(650, 420)
         frame.pack()
         frame.setLocationRelativeTo(null)
         frame.isVisible = true
@@ -133,6 +139,24 @@ private class DesktopApp {
             button.text = if (mode == view.mode) "✓ ${mode.label()}" else mode.label()
         }
         refresh.isEnabled = view.ready
+        if (shownControls != view.controls) {
+            shownControls = view.controls
+            features.removeAll()
+            for (group in shownControls) {
+                val choices = JPanel(FlowLayout(FlowLayout.LEADING))
+                choices.border = BorderFactory.createTitledBorder(group.title)
+                group.hint?.let { choices.toolTipText = it }
+                for (choice in group.choices) {
+                    choices.add(JButton(if (choice.selected) "✓ ${choice.label}" else choice.label).apply {
+                        addActionListener { session?.control(choice.request) }
+                    })
+                }
+                choices.maximumSize = Dimension(Int.MAX_VALUE, choices.preferredSize.height)
+                features.add(choices)
+            }
+            features.revalidate()
+            features.repaint()
+        }
         updateButtons()
     }
 

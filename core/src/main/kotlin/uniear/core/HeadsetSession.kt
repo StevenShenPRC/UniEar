@@ -47,6 +47,8 @@ data class HeadsetView(
     val modes: Set<NoiseMode> = emptySet(),
     val ready: Boolean = false,
     val ended: Boolean = false,
+    val controls: List<ControlGroup> = emptyList(),
+    val controlApps: List<ControlAppSpec> = emptyList(),
 )
 
 fun NoiseMode.label(): String = when (this) {
@@ -225,7 +227,7 @@ class HeadsetSession(
         publish("已连接")
     }
 
-    private fun control(request: ControlRequest) = enqueue {
+    fun control(request: ControlRequest) = enqueue {
         val current = adapter ?: return@enqueue
         val opened = link ?: return@enqueue
         if (!ready || !current.supportsControl(request)) return@enqueue
@@ -319,6 +321,8 @@ class HeadsetSession(
         onView(HeadsetView(
             status, current?.displayName, endpoint, state?.battery ?: EarbudBattery(),
             state?.noiseMode, modes, ready, ended,
+            if (ready) current?.controlGroups().orEmpty() else emptyList(),
+            current?.controlApps.orEmpty(),
         ))
     }
 
