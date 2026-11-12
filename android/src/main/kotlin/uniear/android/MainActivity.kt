@@ -185,7 +185,7 @@ class MainActivity : Activity() {
             minHeight = dp(48)
             isChecked = surface.enabled(this@MainActivity)
             setOnCheckedChangeListener { _, enabled ->
-                Surface.set(this@MainActivity, enabled)
+                surface.set(this@MainActivity, enabled)
                 if (enabled && surface == Surface.NOTIFICATION) askNotificationPermission()
                 if (enabled && surface == Surface.CAPSULE && !Settings.canDrawOverlays(this@MainActivity)) {
                     overlaySettings()
