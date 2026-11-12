@@ -2,6 +2,7 @@ package uniear.android
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.StatusBarManager
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
@@ -42,6 +43,8 @@ class MainActivity : Activity() {
     private lateinit var features: LinearLayout
     private lateinit var apps: LinearLayout
     private lateinit var settingsStatus: TextView
+    private lateinit var networkRuleList: LinearLayout
+    private lateinit var networkRuleStatus: TextView
     private var lastControls: List<ControlGroup>? = null
     private var lastApps: List<dev.hyperears.integration.ControlAppSpec>? = null
     private var scanning = false
@@ -106,7 +109,9 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         ControlState.refreshSurfaces(this)
+        ControlState.service?.updateAutomation()
         updateSettingsStatus()
+        renderNetworkRules()
     }
 
     override fun onStop() {
@@ -187,6 +192,26 @@ class MainActivity : Activity() {
             })
         })
         page.addView(card().apply {
+            addView(text("网络自动化", 21, bold = true))
+            addView(text("耳机连接期间，按当前网络切换降噪模式。", 14, muted))
+            val rules = NetworkRules.read(this@MainActivity)
+            addView(Switch(this@MainActivity).apply {
+                text = "启用网络自动化"
+                textSize = 16f
+                setTextColor(ink)
+                minHeight = dp(48)
+                isChecked = rules.enabled
+                setOnCheckedChangeListener { _, enabled ->
+                    updateNetworkRules(NetworkRules.read(this@MainActivity).copy(enabled = enabled))
+                }
+            })
+            networkRuleList = column().also { addView(it) }
+            addView(action("添加 Wi-Fi 规则") { addWifiRule() })
+            addView(action("授权读取 Wi-Fi 名称") { requestSsidPermission() })
+            networkRuleStatus = text("", 13, muted).also { addView(it) }
+            renderNetworkRules()
+        })
+        page.addView(card().apply {
             addView(text("快捷控制", 21, bold = true))
             addView(text("先在设备页连接耳机，再从各入口切换已支持的模式。", 14, muted))
             addSetting(this, Surface.NOTIFICATION, "通知中心菜单", "折叠时可切换模式，展开后查看耳机信息。")
@@ -202,6 +227,86 @@ class MainActivity : Activity() {
             addView(text("厂商原生入口", 18, bold = true))
             addView(text("华为实况窗、OPPO 流体云、vivo 原子岛和小米超级岛均需厂商接入。这一版本使用 UniEar 悬浮胶囊。", 14, muted))
         })
+    }
+
+    private fun updateNetworkRules(rules: NetworkRules) {
+        rules.save(this)
+        ControlState.service?.updateAutomation()
+        renderNetworkRules()
+    }
+
+    private fun renderNetworkRules() {
+        val rules = NetworkRules.read(this)
+        networkRuleList.removeAllViews()
+        networkRuleList.addView(action("移动网络 · ${rules.cellular?.label() ?: "无动作"}") {
+            chooseNetworkMode("移动网络", rules.cellular) { mode ->
+                updateNetworkRules(NetworkRules.read(this).copy(cellular = mode))
+            }
+        })
+        for ((ssid, mode) in rules.wifi.toSortedMap()) {
+            networkRuleList.addView(action("$ssid · ${mode.label()}") { editWifiRule(ssid) })
+        }
+        networkRuleStatus.text = when {
+            rules.wifi.isEmpty() -> "可按 Wi-Fi 名称添加不同规则。"
+            !hasSsidPermission() -> "Wi-Fi 规则需要精确位置权限。移动网络规则无需位置权限。"
+            !canReadWifiName() -> "请打开系统定位，Android 才能提供当前 Wi-Fi 名称。"
+            else -> "Wi-Fi 名称和规则仅保存在本机。"
+        }
+    }
+
+    private fun editWifiRule(ssid: String) {
+        chooseNetworkMode(ssid, NetworkRules.read(this).wifi[ssid]) { mode ->
+            val current = NetworkRules.read(this)
+            updateNetworkRules(current.copy(wifi = if (mode == null) current.wifi - ssid else current.wifi + (ssid to mode)))
+        }
+    }
+
+    private fun chooseNetworkMode(title: String, current: NoiseMode?, save: (NoiseMode?) -> Unit) {
+        val modes = listOf(null) + NoiseMode.entries
+        val labels = modes.map { it?.label() ?: "无动作" }.toTypedArray()
+        AlertDialog.Builder(this).setTitle(title)
+            .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, item ->
+                save(modes[item])
+                dialog.dismiss()
+            }.setNegativeButton("取消", null).show()
+    }
+
+    private fun addWifiRule() {
+        val input = EditText(this).apply {
+            hint = "Wi-Fi 名称（SSID）"
+            setSingleLine(true)
+        }
+        val container = column().apply {
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(input)
+            addView(action("使用当前 Wi-Fi") {
+                val ssid = connectedWifiName()
+                if (ssid != null) input.setText(ssid)
+                else if (!hasSsidPermission()) requestSsidPermission()
+                else toast("系统未提供当前 Wi-Fi 名称，可手动输入。")
+            })
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("添加 Wi-Fi 规则")
+            .setView(container).setNegativeButton("取消", null).setPositiveButton("选择模式", null).show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val ssid = input.text.toString()
+            if (ssid.isEmpty()) input.error = "请输入 Wi-Fi 名称"
+            else {
+                dialog.dismiss()
+                editWifiRule(ssid)
+            }
+        }
+    }
+
+    private fun requestSsidPermission() {
+        if (!hasSsidPermission()) {
+            val permissions = if (Build.VERSION.SDK_INT >= 31)
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            requestPermissions(permissions, 3)
+        } else if (!canReadWifiName()) {
+            startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+        } else toast("已允许读取 Wi-Fi 名称。")
     }
 
     private fun addSetting(card: LinearLayout, surface: Surface, title: String, description: String) {
@@ -397,6 +502,10 @@ class MainActivity : Activity() {
         if (code == 2) {
             ControlState.refreshSurfaces(this)
             updateSettingsStatus()
+        }
+        if (code == 3) {
+            ControlState.service?.updateAutomation()
+            renderNetworkRules()
         }
     }
 

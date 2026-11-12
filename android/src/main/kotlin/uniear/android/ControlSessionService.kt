@@ -3,6 +3,8 @@ package uniear.android
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import dev.hyperears.integration.ControlRequest
@@ -89,7 +91,11 @@ class ControlSessionService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var session: HeadsetSession? = null
     private var foreground = false
+    private var foregroundLocation = false
     private val capsule by lazy { FloatingControls(this) }
+    private val automation by lazy {
+        NetworkAutomation(this) { command(StandardControlRequest.SetNoiseMode(it)) }
+    }
     internal var token: String? = null
         private set
     internal val active get() = session != null
@@ -107,16 +113,20 @@ class ControlSessionService : Service() {
         ControlState.service = this
         try {
             val initial = HeadsetView("正在连接…", model = headset.identity.deviceName)
-            startForeground(QuickControls.NOTIFICATION_ID, QuickControls.notification(this, initial, generation))
+            enterForeground(initial, generation, false)
             foreground = true
             session = HeadsetSession(AndroidRadio(this), headset) { view ->
                 main.post {
                     if (token == generation) {
-                        if (view.ended) finish(view) else ControlState.publish(this, view)
+                        if (view.ended) finish(view) else {
+                            ControlState.publish(this, view)
+                            automation.onHeadsetChanged(view)
+                        }
                     }
                 }
             }
             ControlState.publish(this, initial)
+            updateAutomation()
         } catch (error: RuntimeException) {
             finish(HeadsetView(error.message ?: "无法建立控制会话"))
         }
@@ -124,6 +134,32 @@ class ControlSessionService : Service() {
     }
 
     internal fun command(request: ControlRequest) { session?.control(request) }
+
+    private fun enterForeground(view: HeadsetView, generation: String, location: Boolean) {
+        val notice = QuickControls.notification(this, view, generation)
+        if (Build.VERSION.SDK_INT >= 29) {
+            val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+                (if (location) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
+            startForeground(QuickControls.NOTIFICATION_ID, notice, type)
+        } else {
+            startForeground(QuickControls.NOTIFICATION_ID, notice)
+        }
+        foregroundLocation = location
+    }
+
+    internal fun updateAutomation() {
+        val generation = token ?: return
+        if (!foreground) return
+        val rules = NetworkRules.read(this)
+        val wantsWifi = rules.enabled && rules.wifi.isNotEmpty() && canReadWifiName()
+        if (wantsWifi != foregroundLocation) {
+            runCatching { enterForeground(ControlState.view, generation, wantsWifi) }
+        }
+        runCatching {
+            automation.configure(rules, wantsWifi && foregroundLocation)
+            automation.onHeadsetChanged(ControlState.view)
+        }.onFailure { automation.close() }
+    }
 
     internal fun disconnect() = finish(HeadsetView("已断开控制连接"))
 
@@ -141,11 +177,13 @@ class ControlSessionService : Service() {
 
     private fun closeSession() {
         token = null
+        automation.close()
         session?.close()
         session = null
         capsule.close()
         if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
         foreground = false
+        foregroundLocation = false
     }
 
     override fun onDestroy() {
