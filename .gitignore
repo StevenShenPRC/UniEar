@@ -1,0 +1,12 @@
+.gradle/
+.gradle-user-home/
+**/build/
+local.properties
+.idea/
+.venv/
+__pycache__/
+/upstream/HyperEars/
+/upstream/HyperEars-snapshot/
+/upstream/.source-commit
+/upstream/.source-tree.json
+/upstream/hyperears.rev.tmp

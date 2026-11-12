@@ -1,1 +1,45 @@
 # UniEar
+
+UniEar 是一个普通应用，用于读取蓝牙耳机的电量和降噪状态，并切换当前型号支持的降噪、通透、关闭或抗风噪模式。先在系统设置中配对耳机，然后在 UniEar 中扫描、选择并连接。
+
+| 平台 | 当前传输实现 |
+| --- | --- |
+| Android 8.0+ | BLE GATT、按服务 UUID 连接的 RFCOMM |
+| Windows | BLE GATT、按服务 UUID 或固定通道号连接的 RFCOMM |
+| Linux | BLE GATT、RFCOMM、经典蓝牙 L2CAP。需启用 BlueZ，RFCOMM 服务查找使用 `sdptool` |
+| macOS | BLE GATT。需允许启动应用的终端或 Python 进程访问蓝牙 |
+
+漫步者、水月雨、弱水时砂等品牌的适配来自 HyperEars。实际功能取决于上游对具体型号和固件的支持，以及平台能否打开适配器声明的控制通道。只提供固定 RFCOMM 通道号的型号，需在支持该传输的桌面系统上试用。
+
+## 构建和运行
+
+准备 Git、JDK 17 和 Python 3.10 或更新版本。将 `JAVA_HOME` 指向 JDK 17，然后从项目根目录运行：
+
+```powershell
+python scripts/hyperears.py checkout
+python -m pip install -r desktop/requirements.txt
+.\gradlew.bat -PdesktopOnly :core:test :desktop:run
+```
+
+在 Linux 或 macOS 上将 `python` 替换为 `python3`，将 `.\gradlew.bat` 替换为 `sh ./gradlew`。用 `:desktop:installDist` 代替 `:desktop:run` 可生成 `desktop/build/install/desktop/`，启动脚本在该目录的 `bin/` 下。桌面版从 PATH 查找 Python，使用虚拟环境时可通过 `UNIEAR_PYTHON` 指定解释器。
+
+Android 构建还需要 Android SDK Platform 34 和 Build Tools 36.0.0。配置 `ANDROID_HOME` 或 `local.properties` 中的 `sdk.dir` 后运行：
+
+```powershell
+.\gradlew.bat :android:assembleDebug
+```
+
+APK 输出路径为 `android/build/outputs/apk/debug/android-debug.apk`。
+
+## 更新品牌适配
+
+`upstream/hyperears.rev` 固定 HyperEars 的 Git 提交。初始化脚本将源码稀疏检出到 `upstream/HyperEars/`。Gradle 直接编译上游 `protocol` 和 `integration` 的 Kotlin 源码，并运行这两个目录中的单元测试。Android 与桌面端共用适配器和会话逻辑，各自实现蓝牙传输。
+
+```powershell
+python scripts/hyperears.py update
+python scripts/hyperears.py update --android
+```
+
+两条命令都从上游 `main` 获取候选版本。前者执行协议测试并编译桌面应用，后者同时构建 Android APK。验证通过后脚本才写入新的提交 SHA，验证失败会恢复原检出。更新后提交 `upstream/hyperears.rev` 即可让其他开发者复现该版本。若上游改动了适配器接口或增加了新的传输类型，先调整 UniEar 的会话或传输层，再运行更新。
+
+上游源码及其第三方许可见 [HyperEars](https://github.com/silverpoetry/HyperEars)。构建会将上游 `LICENSE` 和 `THIRD_PARTY_NOTICES.md` 一并打包到核心模块。
