@@ -1,0 +1,13 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+    <TextView android:id="@+id/notify_device"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textAppearance="@android:style/TextAppearance.Material.Notification.Title"
+        android:maxLines="1" android:ellipsize="end" />
+    <TextView android:id="@+id/notify_mode" style="@style/UniEarNotificationDetail" />
+    <TextView android:id="@+id/notify_battery" style="@style/UniEarNotificationDetail" android:maxLines="2" />
+    <TextView android:id="@+id/notify_link" style="@style/UniEarNotificationDetail" />
+    <include layout="@layout/notification_modes" />
+</LinearLayout>

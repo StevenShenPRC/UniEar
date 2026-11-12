@@ -27,7 +27,7 @@ internal enum class Surface(val key: String) {
 
 /** Process-local state, read and written on the main thread by all Android entry points. */
 internal object ControlState {
-    var view = HeadsetView("在系统中配对耳机，再点击扫描。")
+    var view = HeadsetView("先在系统中连接耳机，再查找已连接耳机。")
         private set
     private var pending: Headset? = null
     var service: ControlSessionService? = null

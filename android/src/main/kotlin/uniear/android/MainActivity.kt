@@ -49,13 +49,21 @@ class MainActivity : Activity() {
     private var settingsSelected = false
     private val renderView: (HeadsetView) -> Unit = ::render
 
-    private val backgroundColor = Color.rgb(242, 245, 240)
-    private val ink = Color.rgb(24, 42, 35)
-    private val muted = Color.rgb(74, 94, 84)
-    private val accent = Color.rgb(33, 90, 80)
-    private val pale = Color.rgb(225, 237, 228)
+    private var dark = false
+    private val backgroundColor get() = if (dark) Color.rgb(16, 26, 22) else Color.rgb(242, 245, 240)
+    private val cardColor get() = if (dark) Color.rgb(26, 39, 33) else Color.WHITE
+    private val ink get() = if (dark) Color.rgb(232, 244, 235) else Color.rgb(24, 42, 35)
+    private val muted get() = if (dark) Color.rgb(176, 197, 184) else Color.rgb(74, 94, 84)
+    private val accent get() = if (dark) Color.rgb(151, 218, 195) else Color.rgb(33, 90, 80)
+    private val pale get() = if (dark) Color.rgb(41, 61, 52) else Color.rgb(225, 237, 228)
+    private val onAccent get() = if (dark) Color.rgb(15, 52, 43) else Color.WHITE
+    private var availableHeadsets: List<Headset> = emptyList()
+
+    private data class DeviceSelection(val devices: List<Headset>, val address: String?)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        dark = getPreferences(MODE_PRIVATE).getBoolean("dark_mode", false)
+        setTheme(if (dark) R.style.UniEarDarkTheme else R.style.UniEarTheme)
         super.onCreate(savedInstanceState)
         val layout = column().apply {
             setBackgroundColor(backgroundColor)
@@ -64,6 +72,7 @@ class MainActivity : Activity() {
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         val logo = ImageView(this).apply {
             setImageResource(R.drawable.ic_headphones)
+            setColorFilter(accent)
             setPadding(dp(10), dp(10), dp(10), dp(10))
             background = shape(pale, 14)
         }
@@ -83,7 +92,11 @@ class MainActivity : Activity() {
         }
         setContentView(scroll)
         selectPage(savedInstanceState?.getBoolean("settings") == true)
+        (lastNonConfigurationInstance as? DeviceSelection)?.let { showHeadsets(it.devices, it.address) }
     }
+
+    override fun onRetainNonConfigurationInstance(): Any =
+        DeviceSelection(availableHeadsets, (devices.selectedItem as? Headset)?.address)
 
     override fun onStart() {
         super.onStart()
@@ -138,9 +151,9 @@ class MainActivity : Activity() {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) = buttons()
                 override fun onNothingSelected(parent: AdapterView<*>?) = buttons()
             }
-            scan = action("扫描") { withBluetooth(::discover) }
+            scan = action("查找已连接耳机") { withBluetooth(false, ::discover) }
             connect = action("连接", primary = true) {
-                if (ControlState.busy) ControlState.service?.disconnect() else withBluetooth(::connect)
+                if (ControlState.busy) ControlState.service?.disconnect() else withBluetooth(true, ::connect)
             }
             addView(row(scan, connect))
         })
@@ -160,9 +173,23 @@ class MainActivity : Activity() {
 
     private fun buildSettingsPage(page: LinearLayout) {
         page.addView(card().apply {
+            addView(text("外观", 21, bold = true))
+            addView(Switch(this@MainActivity).apply {
+                text = "深色模式"
+                textSize = 16f
+                setTextColor(ink)
+                minHeight = dp(48)
+                isChecked = dark
+                setOnCheckedChangeListener { _, enabled ->
+                    getPreferences(MODE_PRIVATE).edit().putBoolean("dark_mode", enabled).apply()
+                    recreate()
+                }
+            })
+        })
+        page.addView(card().apply {
             addView(text("快捷控制", 21, bold = true))
             addView(text("先在设备页连接耳机，再从各入口切换已支持的模式。", 14, muted))
-            addSetting(this, Surface.NOTIFICATION, "通知中心菜单", "在会话通知中显示模式和电量。")
+            addSetting(this, Surface.NOTIFICATION, "通知中心菜单", "折叠时可切换模式，展开后查看耳机信息。")
             addSetting(this, Surface.TILE, "控制中心磁贴", "点按轮换模式，未连接时打开 UniEar。")
             addView(action("添加到控制中心") { addTile() })
             addSetting(this, Surface.WIDGET, "桌面小组件", "显示耳机状态和各模式按钮。")
@@ -245,26 +272,29 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun discover() {
+    private fun discover() = queryHeadsets { peers ->
+        status.text = if (peers.isEmpty()) "未找到已连接的蓝牙耳机，请先在系统中连接耳机。"
+            else "找到 ${peers.size} 副已连接的耳机"
+    }
+
+    private fun queryHeadsets(onResult: (List<Headset>) -> Unit) {
         if (scanning || ControlState.busy) return
         scanning = true
         buttons()
-        status.text = "正在扫描蓝牙设备…"
+        status.text = "正在读取已连接的蓝牙耳机…"
         discovery.execute {
             val result = runCatching { radio.discover() }
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 scanning = false
                 result.onSuccess { peers ->
-                    devices.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, peers).apply {
-                        setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                    }
-                    val last = getPreferences(MODE_PRIVATE).getString("last_address", null)
-                    val index = peers.indexOfFirst { it.address == last }
-                    if (index >= 0) devices.setSelection(index)
-                    status.text = if (peers.isEmpty()) "未发现设备。请确认耳机已配对或正在广播。"
-                        else "找到 ${peers.size} 台设备"
-                }.onFailure { status.text = it.message ?: "蓝牙扫描失败" }
+                    val selected = (devices.selectedItem as? Headset)?.address
+                    showHeadsets(peers, selected ?: getPreferences(MODE_PRIVATE).getString("last_address", null))
+                    onResult(peers)
+                }.onFailure {
+                    showHeadsets(emptyList(), null)
+                    status.text = it.message ?: "无法读取蓝牙连接状态"
+                }
                 buttons()
             }
         }
@@ -272,8 +302,23 @@ class MainActivity : Activity() {
 
     private fun connect() {
         val selected = devices.selectedItem as? Headset ?: return
-        getPreferences(MODE_PRIVATE).edit().putString("last_address", selected.address).apply()
-        ControlState.connect(this, selected)
+        queryHeadsets { peers ->
+            val current = peers.firstOrNull { it.address == selected.address }
+            if (current == null) status.text = "这副耳机已断开，请先在系统中重新连接。"
+            else if (hasWindowFocus()) {
+                getPreferences(MODE_PRIVATE).edit().putString("last_address", current.address).apply()
+                ControlState.connect(this, current)
+            } else status.text = "已找到耳机，回到设备页后点击连接。"
+        }
+    }
+
+    private fun showHeadsets(peers: List<Headset>, address: String?) {
+        availableHeadsets = peers
+        devices.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, peers).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        val index = peers.indexOfFirst { it.address == address }
+        if (index >= 0) devices.setSelection(index)
     }
 
     private fun render(view: HeadsetView) {
@@ -329,10 +374,11 @@ class MainActivity : Activity() {
         style(connect, true)
     }
 
-    private fun withBluetooth(action: () -> Unit) {
+    private fun withBluetooth(forControl: Boolean, action: () -> Unit) {
         val wanted = if (Build.VERSION.SDK_INT >= 31) {
-            arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
-        } else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            if (forControl) arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+            else arrayOf(Manifest.permission.BLUETOOTH_CONNECT)
+        } else if (forControl) arrayOf(Manifest.permission.ACCESS_FINE_LOCATION) else emptyArray()
         val missing = wanted.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
         if (missing.isEmpty()) action() else {
             permissionAction = action
@@ -358,7 +404,7 @@ class MainActivity : Activity() {
 
     private fun card() = column().apply {
         setPadding(dp(16), dp(16), dp(16), dp(16))
-        background = shape(Color.WHITE, 22)
+        background = shape(cardColor, 22)
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }
     }
 
@@ -390,7 +436,7 @@ class MainActivity : Activity() {
 
     private fun style(view: TextView, selected: Boolean) {
         view.background = shape(if (selected) accent else pale, 13)
-        view.setTextColor(if (selected) Color.WHITE else ink)
+        view.setTextColor(if (selected) onAccent else ink)
         view.isSelected = selected
         view.alpha = if (view.isEnabled) 1f else .45f
     }

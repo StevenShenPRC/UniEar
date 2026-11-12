@@ -6,6 +6,8 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Build
 import dev.hyperears.integration.*
 import uniear.core.Headset
@@ -14,9 +16,11 @@ import uniear.core.HeadsetRadio
 import uniear.core.matchesPeer
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 
 @SuppressLint("MissingPermission")
@@ -27,24 +31,64 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
             ?.takeIf(BluetoothAdapter::isEnabled) ?: throw IOException("请先开启蓝牙")
 
     override fun discover(): List<Headset> {
-        val devices = adapter.bondedDevices.associate { it.address to headset(it) }.toMutableMap()
+        val bluetooth = adapter
+        val profiles = buildList {
+            add(BluetoothProfile.A2DP)
+            add(BluetoothProfile.HEADSET)
+            if (Build.VERSION.SDK_INT >= 33) add(BluetoothProfile.LE_AUDIO)
+        }.map { connectedProfile(bluetooth, it) }
+        val leHeadsets = if (Build.VERSION.SDK_INT >= 31) {
+            app.getSystemService(AudioManager::class.java)
+                ?.getDevices(AudioManager.GET_DEVICES_OUTPUTS).orEmpty()
+                .filter { it.type == AudioDeviceInfo.TYPE_BLE_HEADSET && BluetoothAdapter.checkBluetoothAddress(it.address) }
+                .associateBy { it.address }
+        } else emptyMap()
         try {
-            scan(4000) { device, advertisement ->
-                val identity = devices[device.address]?.identity ?: headset(device).identity
-                devices[device.address] = Headset(identity.copy(
-                    deviceName = identity.deviceName ?: advertisement.deviceName,
-                    serviceUuids = identity.serviceUuids + advertisement.serviceUuids,
-                ), advertisement)
-                false
-            }
-        } catch (error: IOException) {
-            if (devices.isEmpty()) throw error
+            CompletableFuture.allOf(*profiles.toTypedArray()).get(3, TimeUnit.SECONDS)
+        } catch (_: TimeoutException) {
+            // Some ROMs do not expose every profile to third-party apps.
         }
-        return devices.values.filter { it.identity.deviceName != null }.sortedBy { it.toString() }
+        val devices = profiles.flatMap { it.getNow(emptyList()) } + leHeadsets.keys.map(bluetooth::getRemoteDevice)
+        return devices.distinctBy { it.address }.mapNotNull { device ->
+            val route = leHeadsets[device.address]
+            val headset = headset(device, route?.productName?.toString())
+            val deviceClass = device.bluetoothClass
+            val isHeadset = route != null || when (deviceClass?.deviceClass) {
+                BluetoothClass.Device.AUDIO_VIDEO_WEARABLE_HEADSET,
+                BluetoothClass.Device.AUDIO_VIDEO_HEADPHONES,
+                BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE -> true
+                null, BluetoothClass.Device.AUDIO_VIDEO_UNCATEGORIZED -> hasKnownAdapter(headset)
+                else -> deviceClass?.majorDeviceClass == BluetoothClass.Device.Major.UNCATEGORIZED &&
+                    hasKnownAdapter(headset)
+            }
+            headset.takeIf { isHeadset }
+        }.sortedBy { it.toString() }
     }
 
-    private fun headset(device: BluetoothDevice): Headset = Headset(EarbudIdentity(
-        deviceName = device.name,
+    private fun connectedProfile(bluetooth: BluetoothAdapter, profile: Int): CompletableFuture<List<BluetoothDevice>> {
+        val result = CompletableFuture<List<BluetoothDevice>>()
+        val listener = object : BluetoothProfile.ServiceListener {
+            override fun onServiceConnected(id: Int, proxy: BluetoothProfile) {
+                try {
+                    result.complete(proxy.connectedDevices.orEmpty())
+                } catch (error: SecurityException) {
+                    result.completeExceptionally(error)
+                } finally {
+                    bluetooth.closeProfileProxy(id, proxy)
+                }
+            }
+
+            override fun onServiceDisconnected(id: Int) { result.complete(emptyList()) }
+        }
+        if (!bluetooth.getProfileProxy(app, listener, profile)) result.complete(emptyList())
+        return result
+    }
+
+    private fun hasKnownAdapter(headset: Headset): Boolean =
+        EarbudAdapterRegistry.forIntegration(headset.identity)?.privateProtocolRequired == true
+
+    private fun headset(device: BluetoothDevice, audioName: String?): Headset = Headset(EarbudIdentity(
+        deviceName = device.name ?: audioName,
         standardHeadset = true,
         deviceAddress = device.address,
         bluetoothDeviceClass = device.bluetoothClass?.deviceClass,

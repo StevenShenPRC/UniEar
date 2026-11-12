@@ -1,0 +1,10 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="44dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+    <TextView android:id="@+id/notify_anc" style="@style/UniEarNotificationButton" android:text="降噪" />
+    <TextView android:id="@+id/notify_transparency" style="@style/UniEarNotificationButton" android:text="通透" />
+    <TextView android:id="@+id/notify_off" style="@style/UniEarNotificationButton" android:text="关闭" />
+    <TextView android:id="@+id/notify_wind" style="@style/UniEarNotificationButton" android:text="抗风噪" />
+</LinearLayout>

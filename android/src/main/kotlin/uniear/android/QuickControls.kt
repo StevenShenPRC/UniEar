@@ -12,6 +12,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.service.quicksettings.Tile
@@ -26,15 +27,19 @@ internal object QuickControls {
     const val NOTIFICATION_ID = 80
     private const val CHANNEL = "headset_session"
     private const val FLAGS = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    private val notificationModes = mapOf(
+        NoiseMode.ANC to R.id.notify_anc, NoiseMode.TRANSPARENCY to R.id.notify_transparency,
+        NoiseMode.OFF to R.id.notify_off, NoiseMode.WIND to R.id.notify_wind,
+    )
 
     fun appIntent(context: Context) = Intent(context, MainActivity::class.java)
         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
     fun openApp(context: Context): PendingIntent = PendingIntent.getActivity(context, 0, appIntent(context), FLAGS)
 
-    fun action(context: Context, surface: Surface, mode: NoiseMode?, token: String): PendingIntent {
+    fun action(context: Context, surface: Surface, mode: NoiseMode, token: String): PendingIntent {
         val uri = Uri.Builder().scheme("uniear").authority("control").appendPath(surface.name)
-            .appendPath(token).appendPath(mode?.name ?: "next").build()
+            .appendPath(token).appendPath(mode.name).build()
         return PendingIntent.getBroadcast(context, 0,
             Intent(context, ControlReceiver::class.java).setData(uri), FLAGS)
     }
@@ -56,15 +61,35 @@ internal object QuickControls {
             .setVisibility(Notification.VISIBILITY_PRIVATE)
         if (Build.VERSION.SDK_INT >= 31) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         if (showControls && view.ready) {
-            val modes = NoiseMode.entries.filter { it in view.modes }
-            for (mode in modes.take(if (modes.size > 3) 2 else 3)) {
-                builder.addAction(Notification.Action.Builder(R.drawable.ic_headphones, mode.label(),
-                    action(context, Surface.NOTIFICATION, mode, token)).build())
-            }
-            if (modes.size > 3) builder.addAction(Notification.Action.Builder(R.drawable.ic_headphones,
-                "下一模式", action(context, Surface.NOTIFICATION, null, token)).build())
+            builder.setStyle(Notification.DecoratedCustomViewStyle())
+                .setCustomContentView(notificationView(context, view, token, expanded = false))
+                .setBigCustomContentView(notificationView(context, view, token, expanded = true))
         }
         return builder.build()
+    }
+
+    private fun notificationView(context: Context, view: HeadsetView, token: String, expanded: Boolean): RemoteViews {
+        val layout = if (expanded) R.layout.notification_details else R.layout.notification_modes
+        return RemoteViews(context.packageName, layout).apply {
+            for ((mode, id) in notificationModes) {
+                val supported = mode in view.modes
+                val selected = supported && mode == view.mode
+                setTextViewText(id, if (selected) "✓${mode.label()}" else mode.label())
+                setTextColor(id, if (supported) Color.rgb(19, 54, 43) else Color.rgb(90, 101, 94))
+                setContentDescription(id, when {
+                    selected -> "${mode.label()}，当前模式"
+                    !supported -> "${mode.label()}，此耳机不支持"
+                    else -> mode.label()
+                })
+                setOnClickPendingIntent(id, if (supported) action(context, Surface.NOTIFICATION, mode, token) else null)
+            }
+            if (expanded) {
+                setTextViewText(R.id.notify_device, view.model ?: "UniEar")
+                setTextViewText(R.id.notify_mode, "当前模式  ${view.mode?.label() ?: "未知"}")
+                setTextViewText(R.id.notify_battery, view.battery.label())
+                setTextViewText(R.id.notify_link, view.endpoint?.let { "控制通道  $it" } ?: view.status)
+            }
+        }
     }
 
     fun updateNotification(context: Context, view: HeadsetView, token: String) {
@@ -86,7 +111,6 @@ class ControlReceiver : BroadcastReceiver() {
         }
         val mode = NoiseMode.entries.firstOrNull { it.name == parts[2] }
         if (mode != null) ControlState.select(context, surface, mode, parts[1])
-        else if (parts[2] == "next") ControlState.cycle(context, surface)
     }
 }
 
