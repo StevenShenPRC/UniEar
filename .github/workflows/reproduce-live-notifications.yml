@@ -1,0 +1,53 @@
+name: Reproduce live notifications
+
+on:
+  push:
+    branches: [research/live-notifications]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: FluidCapsule
+            repository: Venompool888/FluidCapsule
+            revision: 528ac3c185a15512743af893ab0b76c028a6251f
+            test: ':app:testDebugUnitTest'
+          - name: Google-Live-Updates
+            repository: android/codelab-live-updates
+            revision: eca17198003035894fdd090a63be3830bbcb823a
+            test: ''
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+      - name: Build upstream source
+        run: sh ./gradlew --no-daemon ${{ matrix.test }} :app:assembleDebug
+      - name: Verify and collect the APK
+        run: |
+          mkdir output
+          cp app/build/outputs/apk/debug/app-debug.apk "output/${{ matrix.name }}-debug.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "output/${{ matrix.name }}-debug.apk"
+          git rev-parse HEAD > output/source-commit.txt
+          if test -f LICENSE; then cp LICENSE output/; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: output/
+          if-no-files-found: error
