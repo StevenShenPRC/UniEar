@@ -25,16 +25,58 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: "platform-tools platforms;android-34 build-tools;36.0.0"
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
       - name: Check out HyperEars
         run: python3 scripts/hyperears.py checkout
-      - name: Test and build the signed APK
-        run: sh ./gradlew --no-daemon :core:test :desktop:compileKotlin :android:assembleDebug
-      - name: Verify APK signature
+      - name: Test and build the APKs
+        run: sh ./gradlew --no-daemon :core:test :desktop:compileKotlin :android:assembleDebug :android:assembleRelease
+      - name: Sign and verify release APK
+        id: signing
+        env:
+          UNIEAR_KEYSTORE_BASE64: ${{ secrets.UNIEAR_KEYSTORE_BASE64 }}
+          UNIEAR_KEYSTORE_PASSWORD: ${{ secrets.UNIEAR_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UNIEAR_KEYSTORE_BASE64" && -z "$UNIEAR_KEYSTORE_PASSWORD" ]]; then
+            echo '::notice::Release signing secrets are absent. Only a debug APK will be uploaded.'
+            echo 'signed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$UNIEAR_KEYSTORE_BASE64" || -z "$UNIEAR_KEYSTORE_PASSWORD" ]]; then
+            echo '::error::Set both UNIEAR_KEYSTORE_BASE64 and UNIEAR_KEYSTORE_PASSWORD.'
+            exit 1
+          fi
+
+          umask 077
+          keystore=$(mktemp "$RUNNER_TEMP/uniear-signing.XXXXXX.p12")
+          trap 'rm -f -- "$keystore"' EXIT
+          printf '%s' "$UNIEAR_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          unset UNIEAR_KEYSTORE_BASE64
+          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          apk=android/build/outputs/apk/release/UniEar-release.apk
+          "$apksigner" sign --ks "$keystore" --ks-type PKCS12 --ks-key-alias uniear \
+            --ks-pass env:UNIEAR_KEYSTORE_PASSWORD --key-pass env:UNIEAR_KEYSTORE_PASSWORD \
+            --out "$apk" android/build/outputs/apk/release/android-release-unsigned.apk
+          expected=$(keytool -exportcert -keystore "$keystore" -storetype PKCS12 -alias uniear \
+            -storepass:env UNIEAR_KEYSTORE_PASSWORD | sha256sum | cut -d ' ' -f 1)
+          verification=$("$apksigner" verify --verbose --print-certs "$apk")
+          printf '%s\n' "$verification"
+          grep -Fxq "Signer #1 certificate SHA-256 digest: $expected" <<< "$verification"
+          echo 'signed=true' >> "$GITHUB_OUTPUT"
+      - name: Upload fixed-signature release APK
+        if: steps.signing.outputs.signed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UniEar-android-release
+          path: android/build/outputs/apk/release/UniEar-release.apk
+          if-no-files-found: error
+      - name: Verify debug APK signature
+        if: steps.signing.outputs.signed == 'false'
         run: |
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
             android/build/outputs/apk/debug/android-debug.apk
-      - name: Upload signed APK
+      - name: Upload debug APK
+        if: steps.signing.outputs.signed == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: UniEar-android-debug
