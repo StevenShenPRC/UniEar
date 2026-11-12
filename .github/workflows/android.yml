@@ -22,8 +22,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-34" "build-tools;36.0.0"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-34 build-tools;36.0.0"
       - name: Check out HyperEars
         run: python3 scripts/hyperears.py checkout
       - name: Test and build the signed APK
