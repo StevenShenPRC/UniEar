@@ -63,7 +63,7 @@ internal object QuickControls {
         if (showControls && view.ready) {
             builder.setStyle(Notification.DecoratedCustomViewStyle())
                 .setCustomContentView(notificationView(context, view, token, expanded = false))
-                .setBigCustomContentView(notificationView(context, view, token, expanded = true))
+                .setCustomBigContentView(notificationView(context, view, token, expanded = true))
         }
         return builder.build()
     }
