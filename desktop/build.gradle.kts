@@ -17,7 +17,9 @@ tasks.named<JavaExec>("run") { workingDir = rootProject.projectDir }
 distributions {
     main {
         contents {
-            from("radio.py", "requirements.txt") { into("radio") }
+            into("radio") {
+                from("radio.py", "requirements.txt")
+            }
         }
     }
 }
