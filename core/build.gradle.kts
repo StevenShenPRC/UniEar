@@ -40,7 +40,7 @@ dependencies {
 }
 
 tasks.processResources {
-    from(upstream.resolve("LICENSE"), upstream.resolve("THIRD_PARTY_NOTICES.md")) {
-        into("META-INF/hyperears")
+    into("META-INF/hyperears") {
+        from(upstream.resolve("LICENSE"), upstream.resolve("THIRD_PARTY_NOTICES.md"))
     }
 }
