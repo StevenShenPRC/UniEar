@@ -7,6 +7,8 @@ import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.SupplicantState
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -57,17 +59,18 @@ internal fun Context.canReadWifiName(): Boolean {
 }
 
 private fun knownSsid(value: String?): String? = value?.removeSurrounding("\"")
-    ?.takeUnless { it.isEmpty() || it == WifiManager.UNKNOWN_SSID }
+    ?.takeUnless { it.isEmpty() || it == "<unknown ssid>" }
 
 @Suppress("DEPRECATION")
 internal fun Context.connectedWifiName(): String? {
     if (!canReadWifiName()) return null
     return runCatching {
-        knownSsid(applicationContext.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid)
+        val info = applicationContext.getSystemService(WifiManager::class.java)?.connectionInfo
+        knownSsid(info?.takeIf { it.supplicantState == SupplicantState.COMPLETED }?.ssid)
     }.getOrNull()
 }
 
-/** Observes the system's default network only while UniEar owns a headset session. */
+/** Observes the default route and the physical Wi-Fi connection during a headset session. */
 internal class NetworkAutomation(
     private val context: Context,
     private val applyMode: (NoiseMode) -> Unit,
@@ -82,20 +85,34 @@ internal class NetworkAutomation(
     private val main = Handler(Looper.getMainLooper())
     private var rules = NetworkRules()
     private var includeWifi = false
-    private var callback: ConnectivityManager.NetworkCallback? = null
-    private var currentNetwork: Network? = null
+    private var defaultCallback: ConnectivityManager.NetworkCallback? = null
+    private var wifiCallback: ConnectivityManager.NetworkCallback? = null
+    private var defaultNetwork: Network? = null
+    private var defaultCaps: NetworkCapabilities? = null
+    private val wifiNetworks = mutableMapOf<Network, String?>()
+    private var observedEnvironment: Environment? = null
     private var environment: Environment? = null
     private var evaluated: Environment? = null
     private var headset = HeadsetView("")
     private var settling = false
-    private val settle = Runnable {
+    private var wifiRetries = 0
+    private val settle = Runnable { settleNetwork() }
+
+    private fun settleNetwork() {
         settling = false
+        environment = currentEnvironment()
+        if (includeWifi && (environment as? Environment.Wifi)?.let { it.ssid == null } == true && wifiRetries < 4) {
+            wifiRetries++
+            settling = true
+            main.postDelayed(settle, 750)
+            return
+        }
         evaluate()
     }
 
     fun configure(next: NetworkRules, readWifi: Boolean) {
         val changed = next.enabled != rules.enabled || targetMode(next) != targetMode(rules)
-        val restart = includeWifi != readWifi || callback == null
+        val restart = includeWifi != readWifi || defaultCallback == null
         rules = next
         if (!rules.enabled || (rules.cellular == null && rules.wifi.isEmpty())) {
             close()
@@ -105,24 +122,15 @@ internal class NetworkAutomation(
         if (restart) {
             unregister()
             includeWifi = readWifi
-            val monitor = if (Build.VERSION.SDK_INT >= 31 && readWifi) {
-                object : ConnectivityManager.NetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO) {
-                    override fun onAvailable(network: Network) = available(this, network)
-                    override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
-                        capabilities(this, network, caps)
-                    override fun onLost(network: Network) = lost(this, network)
-                }
-            } else {
-                object : ConnectivityManager.NetworkCallback() {
-                    override fun onAvailable(network: Network) = available(this, network)
-                    override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
-                        capabilities(this, network, caps)
-                    override fun onLost(network: Network) = lost(this, network)
-                }
-            }
-            callback = monitor
-            manager.registerDefaultNetworkCallback(monitor, main)
-        } else if (changed) scheduleEvaluation()
+            val defaultMonitor = monitor(wifi = false)
+            defaultCallback = defaultMonitor
+            manager.registerDefaultNetworkCallback(defaultMonitor, main)
+            if (rules.wifi.isNotEmpty()) observeWifi()
+        } else {
+            if (rules.wifi.isNotEmpty() && wifiCallback == null) observeWifi()
+            if (rules.wifi.isEmpty()) stopObservingWifi()
+            scheduleEvaluation()
+        }
     }
 
     fun onHeadsetChanged(view: HeadsetView) {
@@ -130,41 +138,81 @@ internal class NetworkAutomation(
         if (!settling) evaluate()
     }
 
-    private fun available(source: ConnectivityManager.NetworkCallback, network: Network) {
-        if (callback !== source) return
-        currentNetwork = network
-        environment = null
-        main.removeCallbacks(settle)
-        settling = false
+    private fun observeWifi() {
+        val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build()
+        val wifiMonitor = monitor(wifi = true)
+        wifiCallback = wifiMonitor
+        try {
+            manager.registerNetworkCallback(request, wifiMonitor, main)
+        } catch (_: RuntimeException) {
+            wifiCallback = null
+        }
     }
 
-    private fun capabilities(source: ConnectivityManager.NetworkCallback, network: Network, caps: NetworkCapabilities) {
-        if (callback !== source || network != currentNetwork) return
-        val next = when {
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> {
-                val ssid = if (!includeWifi) null else if (Build.VERSION.SDK_INT >= 31) {
-                    knownSsid((caps.transportInfo as? WifiInfo)?.ssid)
-                } else context.connectedWifiName()
-                Environment.Wifi(ssid ?: (environment as? Environment.Wifi)?.ssid)
+    private fun monitor(wifi: Boolean): ConnectivityManager.NetworkCallback {
+        fun available(source: ConnectivityManager.NetworkCallback, network: Network) {
+            if (!wifi && source === defaultCallback && defaultNetwork != network) {
+                defaultNetwork = network
+                defaultCaps = null
             }
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> Environment.Cellular
-            else -> Environment.Other
         }
-        if (next != environment) {
-            environment = next
+        fun capabilities(source: ConnectivityManager.NetworkCallback, network: Network, caps: NetworkCapabilities) {
+            if (wifi && source === wifiCallback) {
+                wifiNetworks[network] = ssid(caps) ?: wifiNetworks[network]
+            } else if (!wifi && source === defaultCallback && network == defaultNetwork) {
+                defaultCaps = caps
+            } else return
+            networkChanged()
+        }
+        fun lost(source: ConnectivityManager.NetworkCallback, network: Network) {
+            if (wifi && source === wifiCallback) {
+                wifiNetworks.remove(network)
+            } else if (!wifi && source === defaultCallback && network == defaultNetwork) {
+                defaultNetwork = null
+                defaultCaps = null
+            } else return
+            networkChanged()
+        }
+        return if (Build.VERSION.SDK_INT >= 31 && includeWifi) {
+            object : ConnectivityManager.NetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO) {
+                override fun onAvailable(network: Network) = available(this, network)
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = capabilities(this, network, caps)
+                override fun onLost(network: Network) = lost(this, network)
+            }
+        } else {
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) = available(this, network)
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = capabilities(this, network, caps)
+                override fun onLost(network: Network) = lost(this, network)
+            }
+        }
+    }
+
+    private fun ssid(caps: NetworkCapabilities?): String? =
+        if (Build.VERSION.SDK_INT >= 31 && includeWifi) knownSsid((caps?.transportInfo as? WifiInfo)?.ssid) else null
+
+    private fun currentEnvironment(): Environment {
+        val caps = defaultCaps
+        if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true || wifiNetworks.isNotEmpty()) {
+            if (!includeWifi || !context.canReadWifiName()) return Environment.Wifi(null)
+            return Environment.Wifi(ssid(caps) ?: defaultNetwork?.let(wifiNetworks::get) ?: context.connectedWifiName()
+                ?: wifiNetworks.values.filterNotNull().distinct().singleOrNull())
+        }
+        return if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) Environment.Cellular else Environment.Other
+    }
+
+    private fun networkChanged() {
+        val current = currentEnvironment()
+        if (current != observedEnvironment) {
+            observedEnvironment = current
             scheduleEvaluation()
         }
     }
 
-    private fun lost(source: ConnectivityManager.NetworkCallback, network: Network) {
-        if (callback !== source || network != currentNetwork) return
-        currentNetwork = null
-        environment = Environment.Other
-        scheduleEvaluation()
-    }
-
     private fun scheduleEvaluation() {
         main.removeCallbacks(settle)
+        wifiRetries = 0
         settling = true
         main.postDelayed(settle, 850)
     }
@@ -191,11 +239,20 @@ internal class NetworkAutomation(
     }
 
     private fun unregister() {
-        callback?.let { runCatching { manager.unregisterNetworkCallback(it) } }
-        callback = null
+        stopObservingWifi()
+        defaultCallback?.let { runCatching { manager.unregisterNetworkCallback(it) } }
+        defaultCallback = null
         main.removeCallbacks(settle)
         settling = false
-        currentNetwork = null
+        defaultNetwork = null
+        defaultCaps = null
+        observedEnvironment = null
         environment = null
+    }
+
+    private fun stopObservingWifi() {
+        wifiCallback?.let { runCatching { manager.unregisterNetworkCallback(it) } }
+        wifiCallback = null
+        wifiNetworks.clear()
     }
 }

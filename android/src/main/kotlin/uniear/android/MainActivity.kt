@@ -221,7 +221,10 @@ class MainActivity : Activity() {
             addView(text("先在设备页连接耳机，再从各入口切换已支持的模式。", 14, muted))
             addSetting(this, Surface.NOTIFICATION, "通知中心菜单", "折叠时可切换模式，展开后查看耳机信息。")
             if (LiveUpdates.supported) {
-                addSetting(this, Surface.LIVE_UPDATE, "连接进度实况", "建立耳机控制连接时显示实时进度，连接完成后自动结束。由系统决定是否在状态栏显示。")
+                addSetting(this, Surface.LIVE_UPDATE, "耳机连接实况", "系统蓝牙连接耳机时自动显示。手动建立控制连接时也可查看进度和取消。")
+                addView(action("授权检测蓝牙连接") {
+                    withBluetooth(false) { updateSettingsStatus() }
+                })
                 addView(action("管理实况通知权限") {
                     if (!LiveUpdates.openSettings(this@MainActivity)) toast("请在系统设置中检查 UniEar 的通知权限。")
                 })
@@ -352,6 +355,10 @@ class MainActivity : Activity() {
         if (Surface.CAPSULE.enabled(this) && !Settings.canDrawOverlays(this)) notes += "悬浮胶囊等待系统授权。"
         if (LiveUpdates.supported && Surface.LIVE_UPDATE.enabled(this) && !LiveUpdates.canPostPromotedNotifications(this)) {
             notes += "请在系统设置中允许 UniEar 显示实况通知。"
+        }
+        if (LiveUpdates.supported && Surface.LIVE_UPDATE.enabled(this) &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            notes += "自动显示耳机连接实况需要附近设备权限。"
         }
         if ((Surface.NOTIFICATION.enabled(this) || Surface.LIVE_UPDATE.enabled(this)) &&
             getSystemService(android.app.NotificationManager::class.java)?.areNotificationsEnabled() == false) {

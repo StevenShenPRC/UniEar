@@ -56,18 +56,22 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
         val devices = profiles.flatMap { it.getNow(emptyList()) } + leHeadsets.keys.map(bluetooth::getRemoteDevice)
         return devices.distinctBy { it.address }.mapNotNull { device ->
             val route = leHeadsets[device.address]
-            val headset = headset(device, route?.productName?.toString())
-            val deviceClass = device.bluetoothClass
-            val isHeadset = route != null || when (deviceClass?.deviceClass) {
-                BluetoothClass.Device.AUDIO_VIDEO_WEARABLE_HEADSET,
-                BluetoothClass.Device.AUDIO_VIDEO_HEADPHONES,
-                BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE -> true
-                null, BluetoothClass.Device.AUDIO_VIDEO_UNCATEGORIZED -> hasKnownAdapter(headset)
-                else -> deviceClass?.majorDeviceClass == BluetoothClass.Device.Major.UNCATEGORIZED &&
-                    hasKnownAdapter(headset)
-            }
-            headset.takeIf { isHeadset }
+            headsetCandidate(device, route?.productName?.toString(), route != null)
         }.sortedBy { it.toString() }
+    }
+
+    fun headsetCandidate(device: BluetoothDevice, audioName: String? = null, leAudio: Boolean = false): Headset? {
+        val candidate = headset(device, audioName)
+        val deviceClass = device.bluetoothClass
+        val isHeadset = leAudio || when (deviceClass?.deviceClass) {
+            BluetoothClass.Device.AUDIO_VIDEO_WEARABLE_HEADSET,
+            BluetoothClass.Device.AUDIO_VIDEO_HEADPHONES,
+            BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE -> true
+            null, BluetoothClass.Device.AUDIO_VIDEO_UNCATEGORIZED -> hasKnownAdapter(candidate)
+            else -> deviceClass?.majorDeviceClass == BluetoothClass.Device.Major.UNCATEGORIZED &&
+                hasKnownAdapter(candidate)
+        }
+        return candidate.takeIf { isHeadset }
     }
 
     private fun connectedProfile(bluetooth: BluetoothAdapter, profile: Int): CompletableFuture<List<BluetoothDevice>> {

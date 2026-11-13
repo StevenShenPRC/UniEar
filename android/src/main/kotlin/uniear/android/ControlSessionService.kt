@@ -23,6 +23,7 @@ internal enum class Surface(val key: String) {
 
     fun set(context: Context, enabled: Boolean) {
         context.getSharedPreferences("quick-controls", Context.MODE_PRIVATE).edit().putBoolean(key, enabled).apply()
+        if (this == LIVE_UPDATE && !enabled) LiveUpdates.dismissBluetoothConnection(context)
         ControlState.refreshSurfaces(context)
     }
 }
@@ -113,6 +114,7 @@ class ControlSessionService : Service() {
         token = generation
         connecting = true
         ControlState.service = this
+        LiveUpdates.dismissBluetoothConnection(this)
         try {
             val initial = HeadsetView("正在连接…", model = headset.identity.deviceName)
             enterForeground(initial, generation, false)
@@ -159,7 +161,7 @@ class ControlSessionService : Service() {
             runCatching { enterForeground(ControlState.view, generation, wantsWifi) }
         }
         runCatching {
-            automation.configure(rules, wantsWifi && foregroundLocation)
+            automation.configure(rules, wantsWifi)
             automation.onHeadsetChanged(ControlState.view)
         }.onFailure { automation.close() }
     }
