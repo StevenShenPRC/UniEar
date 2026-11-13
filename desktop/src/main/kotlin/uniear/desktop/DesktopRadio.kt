@@ -14,7 +14,8 @@ import java.util.concurrent.TimeUnit
 private val macAddress = Regex("(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
 
 internal class DesktopRadio : HeadsetRadio {
-    private val windows = System.getProperty("os.name").startsWith("Windows")
+    private val platform = System.getProperty("os.name")
+    private val windows = platform.startsWith("Windows")
     private val python = System.getenv("UNIEAR_PYTHON") ?: if (windows) "python" else "python3"
     private val script = sequenceOf(
         System.getenv("UNIEAR_RADIO")?.let(::File),
@@ -30,6 +31,19 @@ internal class DesktopRadio : HeadsetRadio {
     }
 
     override fun discover(): List<Headset> = discoverPeers()
+
+    override fun cachedSystemBattery(headset: Headset): Int? {
+        if (!platform.startsWith("Linux") || !macAddress.matches(headset.address)) return null
+        val helper = start("battery", headset.address)
+        return try {
+            if (!helper.waitFor(7, TimeUnit.SECONDS)) return null
+            helper.inputStream.bufferedReader(Charsets.UTF_8).use { input ->
+                input.readLine()?.removePrefix("BATTERY\t")?.toIntOrNull()?.takeIf { it in 0..100 }
+            }
+        } finally {
+            helper.destroyForcibly()
+        }
+    }
 
     private fun discoverPeers(scanTimeMs: Long = 5000, paired: Boolean = true): List<Headset> {
         val process = start("discover", scanTimeMs.toString(), if (paired) "1" else "0")

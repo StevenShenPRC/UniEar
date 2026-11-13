@@ -2,6 +2,7 @@ package uniear.android
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.StatusBarManager
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
@@ -42,6 +43,8 @@ class MainActivity : Activity() {
     private lateinit var features: LinearLayout
     private lateinit var apps: LinearLayout
     private lateinit var settingsStatus: TextView
+    private lateinit var networkRuleList: LinearLayout
+    private lateinit var networkRuleStatus: TextView
     private var lastControls: List<ControlGroup>? = null
     private var lastApps: List<dev.hyperears.integration.ControlAppSpec>? = null
     private var scanning = false
@@ -65,9 +68,9 @@ class MainActivity : Activity() {
         dark = getPreferences(MODE_PRIVATE).getBoolean("dark_mode", false)
         setTheme(if (dark) R.style.UniEarDarkTheme else R.style.UniEarTheme)
         super.onCreate(savedInstanceState)
-        val layout = column().apply {
+        val root = column().apply {
             setBackgroundColor(backgroundColor)
-            setPadding(dp(20), dp(14), dp(20), dp(24))
+            setPadding(dp(20), dp(14), dp(20), 0)
         }
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         val logo = ImageView(this).apply {
@@ -78,10 +81,11 @@ class MainActivity : Activity() {
         }
         header.addView(logo, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(12) })
         header.addView(text("UniEar", 28, bold = true))
-        layout.addView(header)
+        root.addView(header)
         deviceTab = action("设备") { selectPage(false) }
         settingsTab = action("设置") { selectPage(true) }
-        layout.addView(row(deviceTab, settingsTab))
+        root.addView(row(deviceTab, settingsTab))
+        val layout = column().apply { setPadding(0, 0, 0, dp(24)) }
         devicePage = column().apply { buildDevicePage(this) }
         settingsPage = column().apply { buildSettingsPage(this) }
         layout.addView(devicePage)
@@ -90,7 +94,8 @@ class MainActivity : Activity() {
             isFillViewport = true
             addView(layout)
         }
-        setContentView(scroll)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        setContentView(root)
         selectPage(savedInstanceState?.getBoolean("settings") == true)
         (lastNonConfigurationInstance as? DeviceSelection)?.let { showHeadsets(it.devices, it.address) }
     }
@@ -106,7 +111,9 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         ControlState.refreshSurfaces(this)
+        ControlState.service?.updateAutomation()
         updateSettingsStatus()
+        renderNetworkRules()
     }
 
     override fun onStop() {
@@ -142,6 +149,7 @@ class MainActivity : Activity() {
                 addView(it)
             }
             battery = text("电量未知", 15, accent).also { addView(it) }
+            addView(text("已连接的蓝牙耳机", 14, muted).apply { setPadding(0, dp(12), 0, dp(4)) })
             devices = Spinner(this@MainActivity).also {
                 it.minimumHeight = dp(48)
                 it.contentDescription = "选择蓝牙耳机"
@@ -155,10 +163,12 @@ class MainActivity : Activity() {
             connect = action("连接", primary = true) {
                 if (ControlState.busy) ControlState.service?.disconnect() else withBluetooth(true, ::connect)
             }
-            addView(row(scan, connect))
+            addView(scan)
+            addView(connect)
         })
         page.addView(card().apply {
             addView(text("噪声控制", 19, bold = true))
+            addView(text("选择耳机支持的模式", 14, muted))
             modes = NoiseMode.entries.associateWith { mode ->
                 action(mode.label()) { ControlState.command(StandardControlRequest.SetNoiseMode(mode)) }
             }
@@ -187,10 +197,39 @@ class MainActivity : Activity() {
             })
         })
         page.addView(card().apply {
+            addView(text("网络自动化", 21, bold = true))
+            addView(text("耳机连接期间，按当前网络切换降噪模式。", 14, muted))
+            val rules = NetworkRules.read(this@MainActivity)
+            addView(Switch(this@MainActivity).apply {
+                text = "启用网络自动化"
+                textSize = 16f
+                setTextColor(ink)
+                minHeight = dp(48)
+                isChecked = rules.enabled
+                setOnCheckedChangeListener { _, enabled ->
+                    updateNetworkRules(NetworkRules.read(this@MainActivity).copy(enabled = enabled))
+                }
+            })
+            networkRuleList = column().also { addView(it) }
+            addView(action("添加 Wi-Fi 规则") { addWifiRule() })
+            addView(action("授权读取 Wi-Fi 名称") { requestSsidPermission() })
+            networkRuleStatus = text("", 13, muted).also { addView(it) }
+            renderNetworkRules()
+        })
+        page.addView(card().apply {
             addView(text("快捷控制", 21, bold = true))
             addView(text("先在设备页连接耳机，再从各入口切换已支持的模式。", 14, muted))
             addSetting(this, Surface.NOTIFICATION, "通知中心菜单", "折叠时可切换模式，展开后查看耳机信息。")
-            addSetting(this, Surface.TILE, "控制中心磁贴", "点按轮换模式，未连接时打开 UniEar。")
+            if (LiveUpdates.supported) {
+                addSetting(this, Surface.LIVE_UPDATE, "耳机连接实况", "系统蓝牙连接耳机时自动显示。手动建立控制连接时也可查看进度和取消。")
+                addView(action("授权检测蓝牙连接") {
+                    withBluetooth(false) { updateSettingsStatus() }
+                })
+                addView(action("管理实况通知权限") {
+                    if (!LiveUpdates.openSettings(this@MainActivity)) toast("请在系统设置中检查 UniEar 的通知权限。")
+                })
+            }
+            addSetting(this, Surface.TILE, "控制中心磁贴", "点按轮换模式，长按打开 UniEar。")
             addView(action("添加到控制中心") { addTile() })
             addSetting(this, Surface.WIDGET, "桌面小组件", "显示耳机状态和各模式按钮。")
             addView(action("添加到桌面") { pinWidget() })
@@ -204,16 +243,97 @@ class MainActivity : Activity() {
         })
     }
 
+    private fun updateNetworkRules(rules: NetworkRules) {
+        rules.save(this)
+        ControlState.service?.updateAutomation()
+        renderNetworkRules()
+    }
+
+    private fun renderNetworkRules() {
+        val rules = NetworkRules.read(this)
+        networkRuleList.removeAllViews()
+        networkRuleList.addView(action("移动网络 · ${rules.cellular?.label() ?: "无动作"}") {
+            chooseNetworkMode("移动网络", rules.cellular) { mode ->
+                updateNetworkRules(NetworkRules.read(this).copy(cellular = mode))
+            }
+        })
+        for ((ssid, mode) in rules.wifi.toSortedMap()) {
+            networkRuleList.addView(action("$ssid · ${mode.label()}") { editWifiRule(ssid) })
+        }
+        networkRuleStatus.text = when {
+            rules.wifi.isEmpty() -> "可按 Wi-Fi 名称添加不同规则。"
+            !hasSsidPermission() -> "Wi-Fi 规则需要精确位置权限。移动网络规则无需位置权限。"
+            !canReadWifiName() -> "请打开系统定位，Android 才能提供当前 Wi-Fi 名称。"
+            else -> "Wi-Fi 名称和规则仅保存在本机。"
+        }
+    }
+
+    private fun editWifiRule(ssid: String) {
+        chooseNetworkMode(ssid, NetworkRules.read(this).wifi[ssid]) { mode ->
+            val current = NetworkRules.read(this)
+            updateNetworkRules(current.copy(wifi = if (mode == null) current.wifi - ssid else current.wifi + (ssid to mode)))
+        }
+    }
+
+    private fun chooseNetworkMode(title: String, current: NoiseMode?, save: (NoiseMode?) -> Unit) {
+        val modes = listOf(null) + NoiseMode.entries
+        val labels = modes.map { it?.label() ?: "无动作" }.toTypedArray()
+        AlertDialog.Builder(this).setTitle(title)
+            .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, item ->
+                save(modes[item])
+                dialog.dismiss()
+            }.setNegativeButton("取消", null).show()
+    }
+
+    private fun addWifiRule() {
+        val input = EditText(this).apply {
+            hint = "Wi-Fi 名称（SSID）"
+            setSingleLine(true)
+        }
+        val container = column().apply {
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(input)
+            addView(action("使用当前 Wi-Fi") {
+                val ssid = connectedWifiName()
+                if (ssid != null) input.setText(ssid)
+                else if (!hasSsidPermission()) requestSsidPermission()
+                else toast("系统未提供当前 Wi-Fi 名称，可手动输入。")
+            })
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("添加 Wi-Fi 规则")
+            .setView(container).setNegativeButton("取消", null).setPositiveButton("选择模式", null).show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val ssid = input.text.toString()
+            if (ssid.isEmpty()) input.error = "请输入 Wi-Fi 名称"
+            else {
+                dialog.dismiss()
+                editWifiRule(ssid)
+            }
+        }
+    }
+
+    private fun requestSsidPermission() {
+        if (!hasSsidPermission()) {
+            val permissions = if (Build.VERSION.SDK_INT >= 31)
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            requestPermissions(permissions, 3)
+        } else if (!canReadWifiName()) {
+            startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+        } else toast("已允许读取 Wi-Fi 名称。")
+    }
+
     private fun addSetting(card: LinearLayout, surface: Surface, title: String, description: String) {
         card.addView(Switch(this).apply {
             text = title
             textSize = 16f
             setTextColor(ink)
             minHeight = dp(48)
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }
             isChecked = surface.enabled(this@MainActivity)
             setOnCheckedChangeListener { _, enabled ->
                 surface.set(this@MainActivity, enabled)
-                if (enabled && surface == Surface.NOTIFICATION) askNotificationPermission()
+                if (enabled && (surface == Surface.NOTIFICATION || surface == Surface.LIVE_UPDATE)) askNotificationPermission()
                 if (enabled && surface == Surface.CAPSULE && !Settings.canDrawOverlays(this@MainActivity)) {
                     overlaySettings()
                 }
@@ -233,7 +353,14 @@ class MainActivity : Activity() {
     private fun updateSettingsStatus() {
         val notes = mutableListOf<String>()
         if (Surface.CAPSULE.enabled(this) && !Settings.canDrawOverlays(this)) notes += "悬浮胶囊等待系统授权。"
-        if (Surface.NOTIFICATION.enabled(this) &&
+        if (LiveUpdates.supported && Surface.LIVE_UPDATE.enabled(this) && !LiveUpdates.canPostPromotedNotifications(this)) {
+            notes += "请在系统设置中允许 UniEar 显示实况通知。"
+        }
+        if (LiveUpdates.supported && Surface.LIVE_UPDATE.enabled(this) &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            notes += "自动显示耳机连接实况需要附近设备权限。"
+        }
+        if ((Surface.NOTIFICATION.enabled(this) || Surface.LIVE_UPDATE.enabled(this)) &&
             getSystemService(android.app.NotificationManager::class.java)?.areNotificationsEnabled() == false) {
             notes += "请在系统设置中允许 UniEar 通知。"
         }
@@ -339,10 +466,25 @@ class MainActivity : Activity() {
                 for (group in view.controls) {
                     addView(text(group.title, 15, bold = true).apply { setPadding(0, dp(12), 0, 0) })
                     group.hint?.let { addView(text(it, 13, muted)) }
-                    group.choices.chunked(3).forEach { choices ->
-                        addView(row(*choices.map { choice ->
-                            action(choice.label, choice.selected) { ControlState.command(choice.request) }
-                        }.toTypedArray()))
+                    if (group.choices.size > 6) {
+                        val selected = group.choices.indexOfFirst { it.selected }
+                        val summary = group.choices.getOrNull(selected)?.label ?: "选择设置"
+                        addView(action(summary) {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle(group.title)
+                                .setSingleChoiceItems(group.choices.map { it.label }.toTypedArray(), selected) { dialog, which ->
+                                    ControlState.command(group.choices[which].request)
+                                    dialog.dismiss()
+                                }
+                                .setNegativeButton("取消", null)
+                                .show()
+                        })
+                    } else {
+                        group.choices.chunked(2).forEach { choices ->
+                            addView(row(*choices.map { choice ->
+                                action(choice.label, choice.selected) { ControlState.command(choice.request) }
+                            }.toTypedArray()))
+                        }
                     }
                 }
             })
@@ -398,12 +540,16 @@ class MainActivity : Activity() {
             ControlState.refreshSurfaces(this)
             updateSettingsStatus()
         }
+        if (code == 3) {
+            ControlState.service?.updateAutomation()
+            renderNetworkRules()
+        }
     }
 
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
     private fun card() = column().apply {
-        setPadding(dp(16), dp(16), dp(16), dp(16))
+        setPadding(dp(18), dp(18), dp(18), dp(18))
         background = shape(cardColor, 22)
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }
     }
@@ -425,11 +571,12 @@ class MainActivity : Activity() {
 
     private fun action(label: String, primary: Boolean = false, run: () -> Unit) =
         Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) }
             text = label
             isAllCaps = false
-            minimumHeight = dp(46)
-            minHeight = dp(46)
-            setPadding(dp(10), dp(3), dp(10), dp(3))
+            minimumHeight = dp(48)
+            minHeight = dp(48)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
             setOnClickListener { run() }
             style(this, primary)
         }

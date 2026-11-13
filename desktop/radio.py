@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import ctypes
+import os
 import re
 import socket
 import struct
@@ -74,6 +75,16 @@ async def discover(scan_ms, include_paired):
     for error in errors:
         emit("WARN", encoded(error))
     emit("DONE")
+
+
+def cached_battery(address):
+    result = subprocess.run(
+        ["bluetoothctl", "info", address], capture_output=True, text=True, timeout=5, check=True,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    match = re.search(r"^\s*Battery Percentage:\s+0x[0-9a-fA-F]+\s+\((\d+)\)\s*$", result.stdout, re.M)
+    if match and 0 <= int(match[1]) <= 100:
+        emit("BATTERY", match[1])
 
 
 def characteristic(client, service, target, instance, properties):
@@ -232,6 +243,8 @@ async def serve(write, disconnect):
 async def main(command, *args):
     if command == "discover":
         await discover(*args)
+    elif command == "battery":
+        cached_battery(*args)
     elif command == "gatt":
         await gatt(*args)
     elif command in {"rfcomm", "l2cap"}:

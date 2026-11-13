@@ -5,7 +5,10 @@ import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
@@ -14,7 +17,9 @@ import uniear.core.Headset
 import uniear.core.HeadsetLink
 import uniear.core.HeadsetRadio
 import uniear.core.matchesPeer
+import java.io.Closeable
 import java.io.IOException
+import java.lang.reflect.InvocationTargetException
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingQueue
@@ -51,18 +56,22 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
         val devices = profiles.flatMap { it.getNow(emptyList()) } + leHeadsets.keys.map(bluetooth::getRemoteDevice)
         return devices.distinctBy { it.address }.mapNotNull { device ->
             val route = leHeadsets[device.address]
-            val headset = headset(device, route?.productName?.toString())
-            val deviceClass = device.bluetoothClass
-            val isHeadset = route != null || when (deviceClass?.deviceClass) {
-                BluetoothClass.Device.AUDIO_VIDEO_WEARABLE_HEADSET,
-                BluetoothClass.Device.AUDIO_VIDEO_HEADPHONES,
-                BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE -> true
-                null, BluetoothClass.Device.AUDIO_VIDEO_UNCATEGORIZED -> hasKnownAdapter(headset)
-                else -> deviceClass?.majorDeviceClass == BluetoothClass.Device.Major.UNCATEGORIZED &&
-                    hasKnownAdapter(headset)
-            }
-            headset.takeIf { isHeadset }
+            headsetCandidate(device, route?.productName?.toString(), route != null)
         }.sortedBy { it.toString() }
+    }
+
+    fun headsetCandidate(device: BluetoothDevice, audioName: String? = null, leAudio: Boolean = false): Headset? {
+        val candidate = headset(device, audioName)
+        val deviceClass = device.bluetoothClass
+        val isHeadset = leAudio || when (deviceClass?.deviceClass) {
+            BluetoothClass.Device.AUDIO_VIDEO_WEARABLE_HEADSET,
+            BluetoothClass.Device.AUDIO_VIDEO_HEADPHONES,
+            BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE -> true
+            null, BluetoothClass.Device.AUDIO_VIDEO_UNCATEGORIZED -> hasKnownAdapter(candidate)
+            else -> deviceClass?.majorDeviceClass == BluetoothClass.Device.Major.UNCATEGORIZED &&
+                hasKnownAdapter(candidate)
+        }
+        return candidate.takeIf { isHeadset }
     }
 
     private fun connectedProfile(bluetooth: BluetoothAdapter, profile: Int): CompletableFuture<List<BluetoothDevice>> {
@@ -94,6 +103,58 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
         bluetoothDeviceClass = device.bluetoothClass?.deviceClass,
         serviceUuids = device.uuids.orEmpty().map { it.uuid.toString() }.toSet(),
     ))
+
+    @SuppressLint("DiscouragedPrivateApi")
+    override fun cachedSystemBattery(headset: Headset): Int? = runCatching {
+        val device = adapter.getRemoteDevice(headset.address)
+        (BluetoothDevice::class.java.getMethod("getBatteryLevel").invoke(device) as? Int)
+            ?.takeIf { it in 0..100 }
+    }.getOrNull()
+
+    @Suppress("DEPRECATION")
+    override fun observeSystemProfile(
+        headset: Headset,
+        onBatteryChanged: (Int?) -> Unit,
+        onDisconnected: () -> Unit,
+    ): Closeable {
+        val filter = IntentFilter(SYSTEM_BATTERY_CHANGED).apply {
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (intent.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                    val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                    if (state == BluetoothAdapter.STATE_OFF) onDisconnected()
+                    return
+                }
+                val device = if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                } else {
+                    intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+                }
+                if (device == null || !headset.address.equals(device.address, true)) return
+                when (intent.action) {
+                    SYSTEM_BATTERY_CHANGED -> onBatteryChanged(
+                        intent.getIntExtra(SYSTEM_BATTERY_LEVEL, -1).takeIf { it in 0..100 },
+                    )
+                    BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                        val transport = intent.getIntExtra(BluetoothDevice.EXTRA_TRANSPORT, BluetoothDevice.TRANSPORT_AUTO)
+                        // A same-address vendor BLE channel can close while Classic audio stays connected.
+                        if (transport != BluetoothDevice.TRANSPORT_LE || device.type == BluetoothDevice.DEVICE_TYPE_LE) {
+                            onDisconnected()
+                        }
+                    }
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            app.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            app.registerReceiver(receiver, filter)
+        }
+        return Closeable { app.unregisterReceiver(receiver) }
+    }
 
     private fun scan(timeout: Long, match: (BluetoothDevice, GattPeerIdentity) -> Boolean): BluetoothDevice? {
         val scanner = adapter.bluetoothLeScanner ?: throw IOException("此设备的 BLE 扫描不可用")
@@ -134,20 +195,7 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
     override fun open(headset: Headset, spec: EarbudTransportSpec): HeadsetLink {
         val device = adapter.getRemoteDevice(headset.address)
         return when (spec) {
-            is RfcommEndpointSpec.ServiceUuid -> {
-                adapter.cancelDiscovery()
-                val socket = device.createRfcommSocketToServiceRecord(UUID.fromString(spec.uuid))
-                val connect = FutureTask { socket.connect() }
-                Thread(connect, "UniEar Android RFCOMM connect").apply { isDaemon = true }.start()
-                try {
-                    connect.get(13, TimeUnit.SECONDS)
-                    SocketLink(socket)
-                } catch (error: Exception) {
-                    socket.close()
-                    connect.cancel(true)
-                    throw IOException(error.cause?.message ?: "RFCOMM 连接未完成", error)
-                }
-            }
+            is RfcommEndpointSpec -> connectRfcomm(device, spec)
             is GattTransportSpec -> {
                 val peer = when (val selection = spec.peerSelection) {
                     GattPeerSelection.SessionDevice -> device
@@ -159,9 +207,44 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
                 }
                 GattLink(spec).apply { connect(app, peer) }
             }
-            is RfcommEndpointSpec.Channel -> throw IOException("普通 Android 应用无法按固定 RFCOMM 通道号连接")
             is L2capEndpointSpec -> throw IOException("此版本的 Android 传输层未接入经典蓝牙 L2CAP")
         }
+    }
+
+    private fun connectRfcomm(device: BluetoothDevice, spec: RfcommEndpointSpec): HeadsetLink {
+        runCatching { adapter.cancelDiscovery() }
+        val socket = when (spec) {
+            is RfcommEndpointSpec.ServiceUuid -> device.createRfcommSocketToServiceRecord(UUID.fromString(spec.uuid))
+            is RfcommEndpointSpec.Channel -> createChannelSocket(device, spec)
+        }
+        val connect = FutureTask { socket.connect() }
+        Thread(connect, "UniEar Android RFCOMM connect").apply { isDaemon = true }.start()
+        try {
+            connect.get(13, TimeUnit.SECONDS)
+            return SocketLink(socket)
+        } catch (error: Exception) {
+            runCatching { socket.close() }
+            connect.cancel(true)
+            throw IOException(error.cause?.message ?: "RFCOMM 连接未完成", error)
+        }
+    }
+
+    @SuppressLint("DiscouragedPrivateApi")
+    private fun createChannelSocket(device: BluetoothDevice, spec: RfcommEndpointSpec.Channel): BluetoothSocket {
+        val method = if (spec.secure) "createRfcommSocket" else "createInsecureRfcommSocket"
+        return try {
+            BluetoothDevice::class.java.getMethod(method, Int::class.javaPrimitiveType)
+                .invoke(device, spec.number) as BluetoothSocket
+        } catch (error: InvocationTargetException) {
+            throw IOException(error.cause?.message ?: "固定 RFCOMM 通道不可用", error.cause ?: error)
+        } catch (error: ReflectiveOperationException) {
+            throw IOException("系统未向此应用提供固定 RFCOMM 通道", error)
+        }
+    }
+
+    private companion object {
+        const val SYSTEM_BATTERY_CHANGED = "android.bluetooth.device.action.BATTERY_LEVEL_CHANGED"
+        const val SYSTEM_BATTERY_LEVEL = "android.bluetooth.device.extra.BATTERY_LEVEL"
     }
 }
 

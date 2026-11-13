@@ -145,12 +145,25 @@ private class DesktopApp {
             for (group in shownControls) {
                 val choices = JPanel(FlowLayout(FlowLayout.LEADING))
                 choices.border = BorderFactory.createTitledBorder(group.title)
-                group.hint?.let { choices.toolTipText = it }
-                for (choice in group.choices) {
-                    choices.add(JButton(if (choice.selected) "✓ ${choice.label}" else choice.label).apply {
-                        addActionListener { session?.control(choice.request) }
+                if (group.choices.size > 6) {
+                    val selection = JComboBox(group.choices.map { it.label }.toTypedArray())
+                    selection.selectedIndex = group.choices.indexOfFirst { it.selected }
+                    choices.add(selection)
+                    choices.add(JButton("应用").apply {
+                        isEnabled = selection.selectedIndex >= 0
+                        selection.addActionListener { isEnabled = selection.selectedIndex >= 0 }
+                        addActionListener {
+                            group.choices.getOrNull(selection.selectedIndex)?.let { session?.control(it.request) }
+                        }
                     })
+                } else {
+                    for (choice in group.choices) {
+                        choices.add(JButton(if (choice.selected) "✓ ${choice.label}" else choice.label).apply {
+                            addActionListener { session?.control(choice.request) }
+                        })
+                    }
                 }
+                group.hint?.let { choices.add(JLabel(it)) }
                 choices.maximumSize = Dimension(Int.MAX_VALUE, choices.preferredSize.height)
                 features.add(choices)
             }

@@ -25,6 +25,7 @@ import uniear.core.label
 
 internal object QuickControls {
     const val NOTIFICATION_ID = 80
+    const val CANCEL_CONNECTION = "cancel"
     private const val CHANNEL = "headset_session"
     private const val FLAGS = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
     private val notificationModes = mapOf(
@@ -37,29 +38,36 @@ internal object QuickControls {
 
     fun openApp(context: Context): PendingIntent = PendingIntent.getActivity(context, 0, appIntent(context), FLAGS)
 
-    fun action(context: Context, surface: Surface, mode: NoiseMode, token: String): PendingIntent {
+    fun action(context: Context, surface: Surface, mode: NoiseMode, token: String): PendingIntent =
+        controlIntent(context, surface, token, mode.name)
+
+    private fun controlIntent(context: Context, surface: Surface, token: String, action: String): PendingIntent {
         val uri = Uri.Builder().scheme("uniear").authority("control").appendPath(surface.name)
-            .appendPath(token).appendPath(mode.name).build()
+            .appendPath(token).appendPath(action).build()
         return PendingIntent.getBroadcast(context, 0,
             Intent(context, ControlReceiver::class.java).setData(uri), FLAGS)
     }
 
-    fun notification(context: Context, view: HeadsetView, token: String): Notification {
+    fun notification(context: Context, view: HeadsetView, token: String, connecting: Boolean): Notification {
         val manager = requireNotNull(context.getSystemService(NotificationManager::class.java))
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "耳机控制会话", NotificationManager.IMPORTANCE_LOW))
-        val showControls = Surface.NOTIFICATION.enabled(context)
-        val text = if (showControls && view.ready) {
-            listOfNotNull(view.mode?.label(), view.battery.label()).joinToString(" · ")
-        } else if (view.ready) "耳机控制会话正在运行" else "正在连接耳机…"
         val builder = Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_headphones)
-            .setContentTitle(if (showControls) view.model ?: "UniEar" else "UniEar")
-            .setContentText(text)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setContentIntent(openApp(context))
             .setVisibility(Notification.VISIBILITY_PRIVATE)
         if (Build.VERSION.SDK_INT >= 31) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        if (connecting && Build.VERSION.SDK_INT >= 36 && Surface.LIVE_UPDATE.enabled(context)) {
+            val cancel = controlIntent(context, Surface.LIVE_UPDATE, token, CANCEL_CONNECTION)
+            return LiveUpdates.connectionNotification(builder, view, cancel)
+        }
+        val showControls = Surface.NOTIFICATION.enabled(context)
+        val text = if (showControls && view.ready) {
+            listOfNotNull(view.mode?.label(), view.battery.label()).joinToString(" · ")
+        } else if (view.ready) "耳机控制会话正在运行" else "正在连接耳机…"
+        builder.setContentTitle(if (showControls) view.model ?: "UniEar" else "UniEar")
+            .setContentText(text)
         if (showControls && view.ready) {
             builder.setStyle(Notification.DecoratedCustomViewStyle())
                 .setCustomContentView(notificationView(context, view, token, expanded = false))
@@ -92,11 +100,11 @@ internal object QuickControls {
         }
     }
 
-    fun updateNotification(context: Context, view: HeadsetView, token: String) {
+    fun updateNotification(context: Context, view: HeadsetView, token: String, connecting: Boolean) {
         if (Build.VERSION.SDK_INT >= 33 &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         context.getSystemService(NotificationManager::class.java)
-            ?.notify(NOTIFICATION_ID, notification(context, view, token))
+            ?.notify(NOTIFICATION_ID, notification(context, view, token, connecting))
     }
 }
 
@@ -105,6 +113,10 @@ class ControlReceiver : BroadcastReceiver() {
         val parts = intent.data?.pathSegments ?: return
         if (parts.size != 3) return
         val surface = Surface.entries.firstOrNull { it.name == parts[0] } ?: return
+        if (surface == Surface.LIVE_UPDATE) {
+            if (parts[2] == QuickControls.CANCEL_CONNECTION) ControlState.service?.cancelConnection(parts[1])
+            return
+        }
         if (ControlState.service?.token != parts[1]) {
             if (surface == Surface.WIDGET) EarbudWidget.updateAll(context)
             return
