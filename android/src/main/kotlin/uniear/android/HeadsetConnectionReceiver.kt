@@ -12,6 +12,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -30,7 +32,7 @@ class HeadsetConnectionReceiver : BroadcastReceiver() {
             BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> BluetoothProfile.A2DP
             BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED -> BluetoothProfile.HEADSET
             BluetoothLeAudio.ACTION_LE_AUDIO_CONNECTION_STATE_CHANGED -> BluetoothProfile.LE_AUDIO
-            BluetoothDevice.ACTION_ACL_DISCONNECTED -> null
+            BluetoothDevice.ACTION_ACL_CONNECTED, BluetoothDevice.ACTION_ACL_DISCONNECTED -> null
             else -> return
         }
         val device = if (Build.VERSION.SDK_INT >= 33) {
@@ -42,6 +44,11 @@ class HeadsetConnectionReceiver : BroadcastReceiver() {
 
         if (profile == null) {
             val transport = intent.getIntExtra(BluetoothDevice.EXTRA_TRANSPORT, BluetoothDevice.TRANSPORT_AUTO)
+            if (action == BluetoothDevice.ACTION_ACL_CONNECTED) {
+                if (Build.VERSION.SDK_INT >= 31 && transport == BluetoothDevice.TRANSPORT_LE &&
+                    HeadsetConnection.enabled(context)) observeLeAudioRoute(context, device)
+                return
+            }
             if (transport != BluetoothDevice.TRANSPORT_LE || device.type == BluetoothDevice.DEVICE_TYPE_LE) {
                 HeadsetConnection.disconnected(context, device.address)
             }
@@ -55,6 +62,35 @@ class HeadsetConnectionReceiver : BroadcastReceiver() {
                 HeadsetConnection.connected(context, headset, profile)
             }
         }
+    }
+
+    private fun observeLeAudioRoute(context: Context, device: BluetoothDevice) {
+        val pending = goAsync()
+        val main = Handler(Looper.getMainLooper())
+        val audio = context.getSystemService(AudioManager::class.java)
+        var checks = 0
+        val check = object : Runnable {
+            override fun run() {
+                val route = audio?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)?.firstOrNull {
+                    it.type == AudioDeviceInfo.TYPE_BLE_HEADSET && it.address.equals(device.address, true)
+                }
+                if (route == null && ++checks < 4 && HeadsetConnection.enabled(context)) {
+                    main.postDelayed(this, 750)
+                    return
+                }
+                try {
+                    if (route != null && HeadsetConnection.enabled(context)) {
+                        val headset = runCatching {
+                            AndroidRadio(context).headsetCandidate(device, route.productName.toString(), leAudio = true)
+                        }.getOrNull()
+                        if (headset != null) HeadsetConnection.connected(context, headset, BluetoothProfile.LE_AUDIO)
+                    }
+                } finally {
+                    pending.finish()
+                }
+            }
+        }
+        main.post(check)
     }
 }
 
