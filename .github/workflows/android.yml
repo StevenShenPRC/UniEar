@@ -2,8 +2,18 @@ name: Android APK
 
 on:
   push:
-    branches: [main, master, feature/android-experience]
+    branches: [main, master, feature/android-experience, feature/i18n]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      require_release_signature:
+        type: boolean
+        default: true
+    secrets:
+      UNIEAR_KEYSTORE_BASE64:
+        required: true
+      UNIEAR_KEYSTORE_PASSWORD:
+        required: true
 
 permissions:
   contents: read
@@ -33,11 +43,16 @@ jobs:
       - name: Sign and verify release APK
         id: signing
         env:
+          REQUIRE_RELEASE_SIGNATURE: ${{ inputs.require_release_signature }}
           UNIEAR_KEYSTORE_BASE64: ${{ secrets.UNIEAR_KEYSTORE_BASE64 }}
           UNIEAR_KEYSTORE_PASSWORD: ${{ secrets.UNIEAR_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
           if [[ -z "$UNIEAR_KEYSTORE_BASE64" && -z "$UNIEAR_KEYSTORE_PASSWORD" ]]; then
+            if [[ "$REQUIRE_RELEASE_SIGNATURE" == 'true' ]]; then
+              echo '::error::Release signing secrets are required.'
+              exit 1
+            fi
             echo '::notice::Release signing secrets are absent. Only a debug APK will be uploaded.'
             echo 'signed=false' >> "$GITHUB_OUTPUT"
             exit 0
