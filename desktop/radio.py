@@ -22,8 +22,8 @@ def encoded(text):
     return base64.b64encode(text.encode("utf-8")).decode("ascii")
 
 
-def localized(english, chinese):
-    return chinese if os.environ.get("UNIEAR_LOCALE") == "zh" else english
+def localized(english, **translations):
+    return translations.get(os.environ.get("UNIEAR_LOCALE"), english)
 
 
 async def paired_devices():
@@ -102,8 +102,13 @@ def characteristic(client, service, target, instance, properties):
     if instance:
         matches = [ch for ch in matches if ch.handle == int(instance)]
     if len(matches) != 1:
-        raise OSError(localized(f"GATT characteristic unavailable or ambiguous: {target}",
-                                f"GATT 特征不可用或存在歧义：{target}"))
+        raise OSError(localized(
+            f"GATT characteristic unavailable or ambiguous: {target}",
+            zh=f"GATT 特征不可用或存在歧义：{target}", ar=f"خاصية GATT غير متاحة أو ملتبسة: {target}",
+            es=f"Característica GATT no disponible o ambigua: {target}",
+            fr=f"Caractéristique GATT indisponible ou ambiguë : {target}",
+            ru=f"Характеристика GATT недоступна или неоднозначна: {target}",
+        ))
     return matches[0]
 
 
@@ -170,15 +175,26 @@ def sdp_channel(address, endpoint):
             number = protocol.find("uint8")
             if kind is not None and kind.get("value") == "0x0003" and number is not None:
                 return int(number.attrib["value"], 0)
-    raise OSError(localized(f"SDP could not find the RFCOMM service: {endpoint}", f"SDP 未找到 RFCOMM 服务：{endpoint}"))
+    raise OSError(localized(
+        f"SDP could not find the RFCOMM service: {endpoint}",
+        zh=f"SDP 未找到 RFCOMM 服务：{endpoint}", ar=f"لم يعثر SDP على خدمة RFCOMM: {endpoint}",
+        es=f"SDP no encontró el servicio RFCOMM: {endpoint}",
+        fr=f"SDP n’a pas trouvé le service RFCOMM : {endpoint}",
+        ru=f"SDP не нашёл службу RFCOMM: {endpoint}",
+    ))
 
 
 def classic_socket(address, endpoint, secure, l2cap):
     if sys.platform == "win32" and not l2cap:
         return windows_rfcomm(address, endpoint)
     if not sys.platform.startswith("linux"):
-        raise OSError(localized("This OS does not expose the Classic Bluetooth control channel",
-                                "当前系统不提供此经典蓝牙控制通道"))
+        raise OSError(localized(
+            "This OS does not expose the Classic Bluetooth control channel",
+            zh="当前系统不提供此经典蓝牙控制通道", ar="لا يوفر النظام قناة تحكم Bluetooth التقليدية",
+            es="El sistema no ofrece el canal de control Bluetooth clásico",
+            fr="Le système n’expose pas le canal de commande Bluetooth classique",
+            ru="Система не предоставляет канал управления классического Bluetooth",
+        ))
     protocol = socket.BTPROTO_L2CAP if l2cap else socket.BTPROTO_RFCOMM
     kind = socket.SOCK_SEQPACKET if l2cap else socket.SOCK_STREAM
     channel = int(endpoint) if endpoint.isdigit() else sdp_channel(address, endpoint)
@@ -256,7 +272,10 @@ async def main(command, *args):
     elif command in {"rfcomm", "l2cap"}:
         await classic(*args, l2cap=command == "l2cap")
     else:
-        raise ValueError(localized("Unknown Bluetooth operation", "未知蓝牙操作"))
+        raise ValueError(localized(
+            "Unknown Bluetooth operation", zh="未知蓝牙操作", ar="عملية Bluetooth غير معروفة",
+            es="Operación Bluetooth desconocida", fr="Opération Bluetooth inconnue", ru="Неизвестная операция Bluetooth",
+        ))
 
 
 if __name__ == "__main__":

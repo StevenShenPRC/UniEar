@@ -6,21 +6,23 @@ import org.junit.Test
 
 class TranslationsTest {
     @Test
-    fun catalogsHaveTheSameKeysAndArguments() {
+    fun officialLanguagesHaveTheSameKeysAndArguments() {
         val english = Translations.forLocale(Locale.ENGLISH)
-        val chinese = Translations.forLocale(Locale.SIMPLIFIED_CHINESE)
         val placeholder = Regex("\\{[0-9]+}")
-        assertEquals(english.keySet(), chinese.keySet())
-        for (key in english.keySet()) {
-            val expected = placeholder.findAll(english.getString(key)).map { it.value }.sorted().toList()
-            val actual = placeholder.findAll(chinese.getString(key)).map { it.value }.sorted().toList()
-            assertEquals(key, expected, actual)
+        for (language in Translations.supportedLanguages - "en") {
+            val translated = Translations.forLocale(Locale.forLanguageTag(language))
+            assertEquals(language, english.keySet(), translated.keySet())
+            for (key in english.keySet()) {
+                val expected = placeholder.findAll(english.getString(key)).map { it.value }.sorted().toList()
+                val actual = placeholder.findAll(translated.getString(key)).map { it.value }.sorted().toList()
+                assertEquals("$language/$key", expected, actual)
+            }
         }
     }
 
     @Test
     fun unsupportedLocaleFallsBackToEnglish() {
-        assertEquals("Settings", Translations.forLocale(Locale.FRENCH).getString("settings"))
+        assertEquals("Settings", Translations.forLocale(Locale.JAPANESE).getString("settings"))
         assertEquals("设置", Translations.forLocale(Locale.SIMPLIFIED_CHINESE).getString("settings"))
     }
 }

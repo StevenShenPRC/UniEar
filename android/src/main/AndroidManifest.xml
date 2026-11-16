@@ -24,7 +24,7 @@
         </intent>
     </queries>
     <application android:name=".UniEarApplication" android:label="UniEar" android:icon="@drawable/ic_headphones"
-        android:theme="@style/UniEarTheme" android:localeConfig="@xml/locales_config"
+        android:theme="@style/UniEarTheme" android:localeConfig="@xml/locales_config" android:supportsRtl="true"
         android:allowBackup="false">
         <service android:name=".ControlSessionService" android:exported="false"
             android:foregroundServiceType="connectedDevice|location" />

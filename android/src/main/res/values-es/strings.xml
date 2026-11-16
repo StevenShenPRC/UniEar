@@ -1,0 +1,9 @@
+<resources>
+    <string name="tile_label">Modos de auriculares</string>
+    <string name="widget_label">Controles de auriculares UniEar</string>
+    <string name="widget_connect">Pulsa para conectar los auriculares</string>
+    <string name="mode_anc">ANC</string>
+    <string name="mode_transparency">Ambiente</string>
+    <string name="mode_off">Apagado</string>
+    <string name="mode_wind">Viento</string>
+</resources>

@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [main, master, feature/android-experience, feature/i18n]
+    branches: [main, master, feature/android-experience, feature/i18n, feature/pages-un-locales]
   workflow_dispatch:
   workflow_call:
     inputs:

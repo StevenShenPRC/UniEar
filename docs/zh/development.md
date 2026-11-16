@@ -25,3 +25,7 @@ npm run build
 ```
 
 静态站点输出到 `.vitepress/dist`。部署到子路径时，在构建前配置 `DOCS_BASE`。英文页放在文档根目录，中文页用相同文件名放在 `zh/`。
+
+## 新增语言
+
+在 `core/src/main/resources/uniear/core/` 中复制 `messages.properties` 为 `messages_<语言代码>.properties`。翻译值并保留键名和编号占位符，再在 `Translations.supportedLanguages` 中登记语言。Android 需添加 `values-<语言代码>/strings.xml` 并更新 `res/xml/locales_config.xml`。文档页沿用同名文件，放入 `docs/<语言代码>/`，然后在 `docs/.vitepress/config.mts` 中登记语言。需要从右向左阅读时，将方向设为 `rtl`。未支持的语言和缺失的文案条目使用英文。

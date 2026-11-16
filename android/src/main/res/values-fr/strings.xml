@@ -1,0 +1,9 @@
+<resources>
+    <string name="tile_label">Modes du casque</string>
+    <string name="widget_label">Commandes de casque UniEar</string>
+    <string name="widget_connect">Toucher pour connecter le casque</string>
+    <string name="mode_anc">ANC</string>
+    <string name="mode_transparency">Ambiant</string>
+    <string name="mode_off">Arrêt</string>
+    <string name="mode_wind">Vent</string>
+</resources>

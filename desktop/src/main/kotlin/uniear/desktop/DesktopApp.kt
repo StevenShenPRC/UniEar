@@ -4,12 +4,14 @@ import dev.hyperears.integration.NoiseMode
 import uniear.core.*
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.ComponentOrientation
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.GridLayout
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import java.util.Locale
 import javax.swing.*
 
 fun main() = SwingUtilities.invokeLater {
@@ -88,6 +90,7 @@ private class DesktopApp {
         refresh.addActionListener { session?.refresh() }
         render(HeadsetView(tr("scan_for_paired_headphones_and_nearby_bluetooth")))
         frame.minimumSize = Dimension(650, 420)
+        frame.applyComponentOrientation(ComponentOrientation.getOrientation(Locale.getDefault()))
         frame.pack()
         frame.setLocationRelativeTo(null)
         frame.isVisible = true

@@ -1,0 +1,9 @@
+<resources>
+    <string name="tile_label">Режимы наушников</string>
+    <string name="widget_label">Управление наушниками UniEar</string>
+    <string name="widget_connect">Нажмите для подключения наушников</string>
+    <string name="mode_anc">Шумопод.</string>
+    <string name="mode_transparency">Прозрач.</string>
+    <string name="mode_off">Выкл.</string>
+    <string name="mode_wind">Ветер</string>
+</resources>

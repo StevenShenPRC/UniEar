@@ -25,3 +25,7 @@ npm run build
 ```
 
 The static site is in `.vitepress/dist`. Set `DOCS_BASE` before building if you host it at a subpath. Keep English pages in this directory and their Chinese counterparts in `zh/` under the same filename.
+
+## Add a language
+
+Copy `core/src/main/resources/uniear/core/messages.properties` to `messages_<language>.properties` beside it. Translate the values and preserve the keys and numbered placeholders. Register the language in `Translations.supportedLanguages`. For Android, add `values-<language>/strings.xml` and declare the language in `res/xml/locales_config.xml`. Mirror the documentation pages under `docs/<language>/`, then register the locale in `docs/.vitepress/config.mts`. Set the text direction to `rtl` when appropriate. Unsupported application locales and missing catalog entries use English.
