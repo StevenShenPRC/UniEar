@@ -77,7 +77,7 @@ internal object ControlState {
         }
     }
 
-    fun takePending(): Headset? = pending.also { pending = null }
+    fun takePending(): SessionRequest? = pending.also { pending = null }
 
     fun command(request: ControlRequest) {
         if (view.ready) service?.command(request)
@@ -136,6 +136,10 @@ class ControlSessionService : Service() {
             enterForeground(initial, generation, false)
             foreground = true
             LiveUpdates.dismissBluetoothConnection(this)
+            if (next.automatic && !Surface.AUTO_CONNECT.enabled(this)) {
+                finish(HeadsetView("已停止自动连接", model = next.headset.identity.deviceName))
+                return START_NOT_STICKY
+            }
             ControlState.publish(this, initial)
             updateAutomation()
             startAttempt(next, generation)
