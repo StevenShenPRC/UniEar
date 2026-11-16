@@ -24,6 +24,13 @@ import dev.hyperears.integration.NoiseMode
 import uniear.core.HeadsetView
 import uniear.core.label
 
+private fun NoiseMode.compactLabel(context: Context): String = context.getString(when (this) {
+    NoiseMode.ANC -> R.string.mode_anc
+    NoiseMode.TRANSPARENCY -> R.string.mode_transparency
+    NoiseMode.OFF -> R.string.mode_off
+    NoiseMode.WIND -> R.string.mode_wind
+})
+
 internal object QuickControls {
     const val NOTIFICATION_ID = 80
     const val CANCEL_CONNECTION = "cancel"
@@ -83,7 +90,8 @@ internal object QuickControls {
             for ((mode, id) in notificationModes) {
                 val supported = mode in view.modes
                 val selected = supported && mode == view.mode
-                setTextViewText(id, if (selected) "✓${mode.label()}" else mode.label())
+                val label = mode.compactLabel(context)
+                setTextViewText(id, if (selected) "✓$label" else label)
                 setTextColor(id, if (supported) Color.rgb(19, 54, 43) else Color.rgb(90, 101, 94))
                 setContentDescription(id, when {
                     selected -> tr("0_current_mode", mode.label())
@@ -199,7 +207,8 @@ class EarbudWidget : AppWidgetProvider() {
                 for ((mode, id) in modeButtons) {
                     val supported = active && mode in view.modes
                     setViewVisibility(id, if (supported) View.VISIBLE else View.GONE)
-                    setTextViewText(id, if (mode == view.mode) "✓ ${mode.label()}" else mode.label())
+                    val label = mode.compactLabel(context)
+                    setTextViewText(id, if (mode == view.mode) "✓$label" else label)
                     setOnClickPendingIntent(id, if (supported && token != null)
                         QuickControls.action(context, Surface.WIDGET, mode, token) else null)
                 }

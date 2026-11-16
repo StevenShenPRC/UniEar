@@ -2,8 +2,8 @@
     <string name="tile_label">Headphone modes</string>
     <string name="widget_label">UniEar headphone controls</string>
     <string name="widget_connect">Tap to connect headphones</string>
-    <string name="mode_anc">Noise canceling</string>
-    <string name="mode_transparency">Transparency</string>
+    <string name="mode_anc">ANC</string>
+    <string name="mode_transparency">Ambient</string>
     <string name="mode_off">Off</string>
-    <string name="mode_wind">Wind reduction</string>
+    <string name="mode_wind">Wind</string>
 </resources>
