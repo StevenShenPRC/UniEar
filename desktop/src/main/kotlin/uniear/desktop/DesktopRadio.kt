@@ -1,5 +1,6 @@
 package uniear.desktop
 
+import uniear.core.tr
 import dev.hyperears.integration.*
 import uniear.core.Headset
 import uniear.core.HeadsetLink
@@ -8,6 +9,7 @@ import uniear.core.matchesPeer
 import java.io.File
 import java.io.IOException
 import java.util.Base64
+import java.util.Locale
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -25,8 +27,9 @@ internal class DesktopRadio : HeadsetRadio {
     ).filterNotNull().firstOrNull(File::isFile)
 
     private fun start(vararg args: String): Process {
-        val helper = script ?: throw IOException("找不到桌面蓝牙组件 radio.py")
+        val helper = script ?: throw IOException(tr("desktop_bluetooth_helper_radio_py_not_found"))
         return ProcessBuilder(listOf(python, "-u", helper.absolutePath) + args)
+            .apply { environment()["UNIEAR_LOCALE"] = Locale.getDefault().language }
             .redirectError(ProcessBuilder.Redirect.INHERIT).start()
     }
 
@@ -55,13 +58,13 @@ internal class DesktopRadio : HeadsetRadio {
         try {
             while (true) {
                 val line = records.poll(maxOf(0L, limit - System.nanoTime()), TimeUnit.NANOSECONDS)
-                    ?: throw IOException("扫描蓝牙设备超时")
+                    ?: throw IOException(tr("bluetooth_scan_timed_out"))
                 val fields = line.split('\t')
                 when (fields[0]) {
                     "DONE" -> break
                     "ERR" -> throw IOException(decode(fields[1]))
                     "WARN" -> warnings.add(decode(fields[1]))
-                    "EOF" -> throw IOException("蓝牙扫描进程已结束")
+                    "EOF" -> throw IOException(tr("bluetooth_scan_process_exited"))
                     "PEER" -> {
                         val address = fields[1].uppercase()
                         val previous = peers[address]
@@ -98,7 +101,7 @@ internal class DesktopRadio : HeadsetRadio {
                         discoverPeers(selection.scanTimeoutMs, paired = false)
                             .mapNotNull(Headset::advertisement).firstOrNull { candidate ->
                             selection.matchesPeer(headset, candidate)
-                        }?.deviceAddress ?: throw IOException("找不到关联的 BLE 控制端点")
+                        }?.deviceAddress ?: throw IOException(tr("no_matching_ble_control_endpoint_was_found"))
                     }
                 }
                 start("gatt", address, spec.serviceUuid.orEmpty().lowercase(),
@@ -119,7 +122,7 @@ internal class DesktopRadio : HeadsetRadio {
     }
 
     private fun classic(headset: Headset, kind: String, endpoint: String, secure: Boolean): Process {
-        if (!macAddress.matches(headset.address)) throw IOException("该设备没有经典蓝牙地址")
+        if (!macAddress.matches(headset.address)) throw IOException(tr("this_device_has_no_classic_bluetooth_address"))
         return start(kind, headset.address, endpoint, if (secure) "1" else "0")
     }
 }
@@ -160,9 +163,9 @@ private class ProcessLink(private val process: Process) : HeadsetLink {
     }
 
     fun await(reply: String, seconds: Long) {
-        val line = replies.poll(seconds, TimeUnit.SECONDS) ?: throw IOException("等待蓝牙操作超时")
+        val line = replies.poll(seconds, TimeUnit.SECONDS) ?: throw IOException(tr("bluetooth_operation_timed_out"))
         if (line == reply) return
-        throw IOException(if (line.startsWith("ERR\t")) decode(line.substringAfter('\t')) else "蓝牙连接已关闭")
+        throw IOException(if (line.startsWith("ERR\t")) decode(line.substringAfter('\t')) else tr("bluetooth_connection_closed"))
     }
 
     override fun read(): ByteArray? {

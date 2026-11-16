@@ -7,16 +7,16 @@
         <TextView android:id="@+id/widget_title" android:text="UniEar" android:textStyle="bold"
             android:textColor="#FFFFFF" android:textSize="16sp" android:maxLines="1" android:ellipsize="end"
             android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <TextView android:id="@+id/widget_status" android:text="点击连接耳机" android:textColor="#DCEDE3"
+        <TextView android:id="@+id/widget_status" android:text="@string/widget_connect" android:textColor="#DCEDE3"
             android:textSize="12sp" android:maxLines="2"
             android:layout_width="match_parent" android:layout_height="wrap_content" />
     </LinearLayout>
     <LinearLayout android:id="@+id/widget_modes" android:orientation="horizontal"
         android:layout_marginTop="4dp" android:visibility="gone"
         android:layout_width="match_parent" android:layout_height="wrap_content">
-        <Button android:id="@+id/widget_anc" style="@style/UniEarWidgetButton" android:text="降噪" />
-        <Button android:id="@+id/widget_transparency" style="@style/UniEarWidgetButton" android:text="通透" />
-        <Button android:id="@+id/widget_off" style="@style/UniEarWidgetButton" android:text="关闭" />
-        <Button android:id="@+id/widget_wind" style="@style/UniEarWidgetButton" android:text="抗风噪" />
+        <Button android:id="@+id/widget_anc" style="@style/UniEarWidgetButton" android:text="@string/mode_anc" />
+        <Button android:id="@+id/widget_transparency" style="@style/UniEarWidgetButton" android:text="@string/mode_transparency" />
+        <Button android:id="@+id/widget_off" style="@style/UniEarWidgetButton" android:text="@string/mode_off" />
+        <Button android:id="@+id/widget_wind" style="@style/UniEarWidgetButton" android:text="@string/mode_wind" />
     </LinearLayout>
 </LinearLayout>

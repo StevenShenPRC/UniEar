@@ -1,5 +1,6 @@
 package uniear.android
 
+import uniear.core.tr
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.PendingIntent
@@ -113,14 +114,14 @@ internal object HeadsetConnection {
         val supported = canControl(headset)
         val automatic = Surface.AUTO_CONNECT.enabled(context)
         if (!supported) {
-            LiveUpdates.showBluetoothConnection(context, headset.identity.deviceName, "当前型号没有可用的控制适配器")
+            LiveUpdates.showBluetoothConnection(context, headset.identity.deviceName, tr("no_control_adapter_is_available_for_this"))
         } else if (automatic) {
             clearOffer(context)
-            LiveUpdates.showBluetoothConnection(context, headset.identity.deviceName, "正在建立 UniEar 控制连接…")
+            LiveUpdates.showBluetoothConnection(context, headset.identity.deviceName, tr("opening_the_uniear_control_channel"))
             if (!ControlState.connect(context, headset, automatic = true)) {
-                showOffer(context, headset, "系统限制后台连接，请点按「连接」。")
+                showOffer(context, headset, tr("android_restricted_background_startup_tap_connect"))
             }
-        } else showOffer(context, headset, "可以尝试建立 UniEar 控制连接。")
+        } else showOffer(context, headset, tr("you_can_try_opening_the_uniear_control"))
     }
 
     fun canControl(headset: Headset) =

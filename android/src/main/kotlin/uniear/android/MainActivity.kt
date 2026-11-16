@@ -82,8 +82,8 @@ class MainActivity : Activity() {
         header.addView(logo, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(12) })
         header.addView(text("UniEar", 28, bold = true))
         root.addView(header)
-        deviceTab = action("设备") { selectPage(false) }
-        settingsTab = action("设置") { selectPage(true) }
+        deviceTab = action(tr("devices")) { selectPage(false) }
+        settingsTab = action(tr("settings")) { selectPage(true) }
         root.addView(row(deviceTab, settingsTab))
         val layout = column().apply { setPadding(0, 0, 0, dp(24)) }
         devicePage = column().apply { buildDevicePage(this) }
@@ -143,38 +143,38 @@ class MainActivity : Activity() {
 
     private fun buildDevicePage(page: LinearLayout) {
         page.addView(card().apply {
-            model = text("选择一台耳机", 23, bold = true).also { addView(it) }
+            model = text(tr("select_headphones"), 23, bold = true).also { addView(it) }
             status = text("", 14, muted).also {
                 it.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE)
                 addView(it)
             }
-            battery = text("电量未知", 15, accent).also { addView(it) }
-            addView(text("已连接的蓝牙耳机", 14, muted).apply { setPadding(0, dp(12), 0, dp(4)) })
+            battery = text(tr("battery_level_unknown"), 15, accent).also { addView(it) }
+            addView(text(tr("connected_bluetooth_headphones"), 14, muted).apply { setPadding(0, dp(12), 0, dp(4)) })
             devices = Spinner(this@MainActivity).also {
                 it.minimumHeight = dp(48)
-                it.contentDescription = "选择蓝牙耳机"
+                it.contentDescription = tr("select_bluetooth_headphones")
                 addView(it, LinearLayout.LayoutParams(-1, -2))
             }
             devices.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) = buttons()
                 override fun onNothingSelected(parent: AdapterView<*>?) = buttons()
             }
-            scan = action("查找已连接耳机") { withBluetooth(false, ::discover) }
-            connect = action("连接", primary = true) {
+            scan = action(tr("find_connected_headphones")) { withBluetooth(false, ::discover) }
+            connect = action(tr("connect"), primary = true) {
                 if (ControlState.busy) ControlState.service?.disconnect() else withBluetooth(true, ::connect)
             }
             addView(scan)
             addView(connect)
         })
         page.addView(card().apply {
-            addView(text("噪声控制", 19, bold = true))
-            addView(text("选择耳机支持的模式", 14, muted))
+            addView(text(tr("noise_control"), 19, bold = true))
+            addView(text(tr("choose_a_mode_supported_by_your_headphones"), 14, muted))
             modes = NoiseMode.entries.associateWith { mode ->
                 action(mode.label()) { ControlState.command(StandardControlRequest.SetNoiseMode(mode)) }
             }
             addView(row(modes.getValue(NoiseMode.ANC), modes.getValue(NoiseMode.TRANSPARENCY)))
             addView(row(modes.getValue(NoiseMode.OFF), modes.getValue(NoiseMode.WIND)))
-            refresh = action("刷新耳机状态") { ControlState.command(StandardControlRequest.Refresh) }
+            refresh = action(tr("refresh_headphone_status")) { ControlState.command(StandardControlRequest.Refresh) }
             addView(refresh)
         })
         features = column().also { page.addView(it) }
@@ -183,9 +183,9 @@ class MainActivity : Activity() {
 
     private fun buildSettingsPage(page: LinearLayout) {
         page.addView(card().apply {
-            addView(text("外观", 21, bold = true))
+            addView(text(tr("appearance"), 21, bold = true))
             addView(Switch(this@MainActivity).apply {
-                text = "深色模式"
+                text = tr("dark_mode")
                 textSize = 16f
                 setTextColor(ink)
                 minHeight = dp(48)
@@ -197,11 +197,11 @@ class MainActivity : Activity() {
             })
         })
         page.addView(card().apply {
-            addView(text("网络自动化", 21, bold = true))
-            addView(text("耳机连接期间，按当前网络切换降噪模式。", 14, muted))
+            addView(text(tr("network_automation"), 21, bold = true))
+            addView(text(tr("switch_listening_modes_by_network_while_headphones"), 14, muted))
             val rules = NetworkRules.read(this@MainActivity)
             addView(Switch(this@MainActivity).apply {
-                text = "启用网络自动化"
+                text = tr("enable_network_automation")
                 textSize = 16f
                 setTextColor(ink)
                 minHeight = dp(48)
@@ -211,43 +211,43 @@ class MainActivity : Activity() {
                 }
             })
             networkRuleList = column().also { addView(it) }
-            addView(action("添加 Wi-Fi 规则") { addWifiRule() })
-            addView(action("授权读取 Wi-Fi 名称") { requestSsidPermission() })
+            addView(action(tr("add_a_wi_fi_rule")) { addWifiRule() })
+            addView(action(tr("allow_access_to_wi_fi_names")) { requestSsidPermission() })
             networkRuleStatus = text("", 13, muted).also { addView(it) }
             renderNetworkRules()
         })
         page.addView(card().apply {
-            addView(text("耳机连接", 21, bold = true))
-            addSetting(this, Surface.AUTO_CONNECT, "自动建立控制连接", "系统蓝牙连上支持的耳机后自动尝试，最多三次。成功后提示已取得控制权。")
-            addSetting(this, Surface.LIVE_UPDATE, "耳机连接实况", "关闭自动连接时，通知会保留约 30 秒，可选择连接或忽略。")
-            addView(action("授权检测蓝牙连接") {
+            addView(text(tr("headphone_connection"), 21, bold = true))
+            addSetting(this, Surface.AUTO_CONNECT, tr("automatically_connect_controls"), tr("try_up_to_three_times_after_supported"))
+            addSetting(this, Surface.LIVE_UPDATE, tr("headphone_connection_updates"), tr("with_auto_connect_off_the_notification_offers"))
+            addView(action(tr("allow_bluetooth_connection_detection")) {
                 withBluetooth(true) {
                     askNotificationPermission()
                     updateSettingsStatus()
                 }
             })
             if (CompanionHeadsets.available(this@MainActivity)) {
-                addView(action("关联耳机以允许后台自动连接") { selectCompanionHeadset() })
+                addView(action(tr("associate_headphones_for_background_connection")) { selectCompanionHeadset() })
             }
-            if (LiveUpdates.supported) addView(action("管理实况通知权限") {
-                if (!LiveUpdates.openSettings(this@MainActivity)) toast("请在系统设置中检查 UniEar 的通知权限。")
+            if (LiveUpdates.supported) addView(action(tr("manage_live_update_permissions")) {
+                if (!LiveUpdates.openSettings(this@MainActivity)) toast(tr("check_uniear_notification_permissions_in_system_settings"))
             })
         })
         page.addView(card().apply {
-            addView(text("快捷控制", 21, bold = true))
-            addView(text("先在设备页连接耳机，再从各入口切换已支持的模式。", 14, muted))
-            addSetting(this, Surface.NOTIFICATION, "通知中心菜单", "折叠时可切换模式，展开后查看耳机信息。")
-            addSetting(this, Surface.TILE, "控制中心磁贴", "点按轮换模式，长按打开 UniEar。")
-            addView(action("添加到控制中心") { addTile() })
-            addSetting(this, Surface.WIDGET, "桌面小组件", "显示耳机状态和各模式按钮。")
-            addView(action("添加到桌面") { pinWidget() })
-            addSetting(this, Surface.CAPSULE, "UniEar 悬浮胶囊", "跨应用显示模式控制。需允许显示在其他应用上层。")
-            addView(action("管理悬浮权限") { overlaySettings() })
+            addView(text(tr("quick_controls"), 21, bold = true))
+            addView(text(tr("connect_your_headphones_on_the_devices_tab"), 14, muted))
+            addSetting(this, Surface.NOTIFICATION, tr("notification_controls"), tr("switch_modes_in_the_collapsed_notification_expand"))
+            addSetting(this, Surface.TILE, tr("quick_settings_tile"), tr("tap_to_cycle_through_modes_long_press"))
+            addView(action(tr("add_to_quick_settings")) { addTile() })
+            addSetting(this, Surface.WIDGET, tr("home_screen_widget"), tr("show_headphone_status_and_mode_buttons"))
+            addView(action(tr("add_to_home_screen")) { pinWidget() })
+            addSetting(this, Surface.CAPSULE, tr("uniear_floating_controls"), tr("show_controls_over_other_apps_requires_overlay"))
+            addView(action(tr("manage_overlay_permission")) { overlaySettings() })
             settingsStatus = text("", 13, muted).also { addView(it) }
         })
         page.addView(card().apply {
-            addView(text("厂商原生入口", 18, bold = true))
-            addView(text("华为实况窗、OPPO 流体云、vivo 原子岛和小米超级岛均需厂商接入。这一版本使用 UniEar 悬浮胶囊。", 14, muted))
+            addView(text(tr("vendor_integrations"), 18, bold = true))
+            addView(text(tr("huawei_live_view_oppo_fluid_cloud_vivo"), 14, muted))
         })
     }
 
@@ -260,8 +260,8 @@ class MainActivity : Activity() {
     private fun renderNetworkRules() {
         val rules = NetworkRules.read(this)
         networkRuleList.removeAllViews()
-        networkRuleList.addView(action("移动网络 · ${rules.cellular?.label() ?: "无动作"}") {
-            chooseNetworkMode("移动网络", rules.cellular) { mode ->
+        networkRuleList.addView(action(tr("mobile_data_0", rules.cellular?.label() ?: tr("do_nothing"))) {
+            chooseNetworkMode(tr("mobile_data"), rules.cellular) { mode ->
                 updateNetworkRules(NetworkRules.read(this).copy(cellular = mode))
             }
         })
@@ -269,10 +269,10 @@ class MainActivity : Activity() {
             networkRuleList.addView(action("$ssid · ${mode.label()}") { editWifiRule(ssid) })
         }
         networkRuleStatus.text = when {
-            rules.wifi.isEmpty() -> "可按 Wi-Fi 名称添加不同规则。"
-            !hasSsidPermission() -> "Wi-Fi 规则需要精确位置权限。移动网络规则无需位置权限。"
-            !canReadWifiName() -> "请打开系统定位，Android 才能提供当前 Wi-Fi 名称。"
-            else -> "Wi-Fi 名称和规则仅保存在本机。"
+            rules.wifi.isEmpty() -> tr("add_rules_for_specific_wi_fi_names")
+            !hasSsidPermission() -> tr("wi_fi_rules_need_precise_location_access")
+            !canReadWifiName() -> tr("turn_on_system_location_so_android_can")
+            else -> tr("wi_fi_names_and_rules_are_stored")
         }
     }
 
@@ -285,34 +285,34 @@ class MainActivity : Activity() {
 
     private fun chooseNetworkMode(title: String, current: NoiseMode?, save: (NoiseMode?) -> Unit) {
         val modes = listOf(null) + NoiseMode.entries
-        val labels = modes.map { it?.label() ?: "无动作" }.toTypedArray()
+        val labels = modes.map { it?.label() ?: tr("do_nothing") }.toTypedArray()
         AlertDialog.Builder(this).setTitle(title)
             .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, item ->
                 save(modes[item])
                 dialog.dismiss()
-            }.setNegativeButton("取消", null).show()
+            }.setNegativeButton(tr("cancel"), null).show()
     }
 
     private fun addWifiRule() {
         val input = EditText(this).apply {
-            hint = "Wi-Fi 名称（SSID）"
+            hint = tr("wi_fi_name_ssid")
             setSingleLine(true)
         }
         val container = column().apply {
             setPadding(dp(20), dp(8), dp(20), 0)
             addView(input)
-            addView(action("使用当前 Wi-Fi") {
+            addView(action(tr("use_current_wi_fi")) {
                 val ssid = connectedWifiName()
                 if (ssid != null) input.setText(ssid)
                 else if (!hasSsidPermission()) requestSsidPermission()
-                else toast("系统未提供当前 Wi-Fi 名称，可手动输入。")
+                else toast(tr("android_did_not_provide_a_wi_fi"))
             })
         }
-        val dialog = AlertDialog.Builder(this).setTitle("添加 Wi-Fi 规则")
-            .setView(container).setNegativeButton("取消", null).setPositiveButton("选择模式", null).show()
+        val dialog = AlertDialog.Builder(this).setTitle(tr("add_a_wi_fi_rule"))
+            .setView(container).setNegativeButton(tr("cancel"), null).setPositiveButton(tr("choose_a_mode"), null).show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val ssid = input.text.toString()
-            if (ssid.isEmpty()) input.error = "请输入 Wi-Fi 名称"
+            if (ssid.isEmpty()) input.error = tr("enter_a_wi_fi_name")
             else {
                 dialog.dismiss()
                 editWifiRule(ssid)
@@ -328,7 +328,7 @@ class MainActivity : Activity() {
             requestPermissions(permissions, 3)
         } else if (!canReadWifiName()) {
             startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
-        } else toast("已允许读取 Wi-Fi 名称。")
+        } else toast(tr("wi_fi_name_access_granted"))
     }
 
     private fun addSetting(card: LinearLayout, surface: Surface, title: String, description: String) {
@@ -363,16 +363,16 @@ class MainActivity : Activity() {
 
     private fun updateSettingsStatus() {
         val notes = mutableListOf<String>()
-        if (Surface.CAPSULE.enabled(this) && !Settings.canDrawOverlays(this)) notes += "悬浮胶囊等待系统授权。"
+        if (Surface.CAPSULE.enabled(this) && !Settings.canDrawOverlays(this)) notes += tr("allow_the_floating_controls_to_appear_over")
         if (LiveUpdates.supported && HeadsetConnection.enabled(this) && !LiveUpdates.canPostPromotedNotifications(this)) {
-            notes += "请在系统设置中允许 UniEar 显示实况通知。"
+            notes += tr("allow_uniear_live_updates_in_system_settings")
         }
         if (HeadsetConnection.enabled(this) && !HeadsetConnection.hasBluetoothPermission(this)) {
-            notes += "自动显示耳机连接实况需要附近设备权限。"
+            notes += tr("connection_updates_require_nearby_devices_access")
         }
         if ((Surface.NOTIFICATION.enabled(this) || HeadsetConnection.enabled(this)) &&
             getSystemService(android.app.NotificationManager::class.java)?.areNotificationsEnabled() == false) {
-            notes += "请在系统设置中允许 UniEar 通知。"
+            notes += tr("allow_uniear_notifications_in_system_settings")
         }
         settingsStatus.text = notes.joinToString("\n")
         settingsStatus.visibility = if (notes.isEmpty()) View.GONE else View.VISIBLE
@@ -380,17 +380,17 @@ class MainActivity : Activity() {
 
     private fun selectCompanionHeadset() = withBluetooth(true) {
         if (ControlState.busy) {
-            toast("请先断开 UniEar 的控制连接，保留系统蓝牙连接。")
+            toast(tr("disconnect_the_uniear_control_session_and_keep"))
             return@withBluetooth
         }
         queryHeadsets { connected ->
             val peers = connected.filter(HeadsetConnection::canControl)
-            if (peers.isEmpty()) toast("请先在系统蓝牙中连接一副支持控制的耳机。")
-            else AlertDialog.Builder(this).setTitle("选择要关联的耳机")
+            if (peers.isEmpty()) toast(tr("connect_supported_headphones_in_system_bluetooth_settings"))
+            else AlertDialog.Builder(this).setTitle(tr("select_headphones_to_associate"))
                 .setItems(peers.map { it.identity.deviceName ?: it.address }.toTypedArray()) { _, index ->
                     runCatching { CompanionHeadsets.associate(this, peers[index], ::toast) }
-                        .onFailure { toast("系统未能关联这副耳机。") }
-                }.setNegativeButton("取消", null).show()
+                        .onFailure { toast(tr("could_not_associate_these_headphones")) }
+                }.setNegativeButton(tr("cancel"), null).show()
         }
     }
 
@@ -398,21 +398,21 @@ class MainActivity : Activity() {
         try {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         } catch (_: android.content.ActivityNotFoundException) {
-            toast("请在系统设置中查找悬浮窗权限。")
+            toast(tr("find_overlay_permissions_in_system_settings"))
         }
     }
 
     private fun addTile() {
         if (Build.VERSION.SDK_INT < 33) {
-            toast("打开控制中心的编辑页面，添加“耳机模式”。")
+            toast(tr("open_quick_settings_edit_mode_and_add"))
             return
         }
         val manager = getSystemService(StatusBarManager::class.java) ?: return
-        manager.requestAddTileService(ComponentName(this, EarbudTile::class.java), "耳机模式",
+        manager.requestAddTileService(ComponentName(this, EarbudTile::class.java), tr("headphone_modes"),
             Icon.createWithResource(this, R.drawable.ic_headphones), mainExecutor) { result ->
             if (result != StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED &&
                 result != StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED) {
-                toast("也可以在控制中心编辑页面添加“耳机模式”。")
+                toast(tr("you_can_also_add_the_headphone_modes"))
             }
         }
     }
@@ -421,20 +421,20 @@ class MainActivity : Activity() {
         val manager = AppWidgetManager.getInstance(this)
         if (!manager.isRequestPinAppWidgetSupported ||
             !manager.requestPinAppWidget(ComponentName(this, EarbudWidget::class.java), null, null)) {
-            toast("请长按桌面，在小组件列表中添加 UniEar。")
+            toast(tr("long_press_the_home_screen_and_add"))
         }
     }
 
     private fun discover() = queryHeadsets { peers ->
-        status.text = if (peers.isEmpty()) "未找到已连接的蓝牙耳机，请先在系统中连接耳机。"
-            else "找到 ${peers.size} 副已连接的耳机"
+        status.text = if (peers.isEmpty()) tr("no_connected_headphones_found_connect_them_in")
+            else tr("connected_headphones_found_0", peers.size)
     }
 
     private fun queryHeadsets(onResult: (List<Headset>) -> Unit) {
         if (scanning || ControlState.busy) return
         scanning = true
         buttons()
-        status.text = "正在读取已连接的蓝牙耳机…"
+        status.text = tr("finding_connected_bluetooth_headphones")
         discovery.execute {
             val result = runCatching { radio.discover() }
             runOnUiThread {
@@ -446,7 +446,7 @@ class MainActivity : Activity() {
                     onResult(peers)
                 }.onFailure {
                     showHeadsets(emptyList(), null)
-                    status.text = it.message ?: "无法读取蓝牙连接状态"
+                    status.text = it.message ?: tr("could_not_read_bluetooth_connection_status")
                 }
                 buttons()
             }
@@ -457,11 +457,11 @@ class MainActivity : Activity() {
         val selected = devices.selectedItem as? Headset ?: return
         queryHeadsets { peers ->
             val current = peers.firstOrNull { it.address == selected.address }
-            if (current == null) status.text = "这副耳机已断开，请先在系统中重新连接。"
+            if (current == null) status.text = tr("these_headphones_disconnected_reconnect_them_in_system")
             else if (hasWindowFocus()) {
                 getPreferences(MODE_PRIVATE).edit().putString("last_address", current.address).apply()
                 ControlState.connect(this, current)
-            } else status.text = "已找到耳机，回到设备页后点击连接。"
+            } else status.text = tr("headphones_found_return_to_devices_and_tap")
         }
     }
 
@@ -475,7 +475,7 @@ class MainActivity : Activity() {
     }
 
     private fun render(view: HeadsetView) {
-        model.text = view.model ?: "选择一台耳机"
+        model.text = view.model ?: tr("select_headphones")
         if (!scanning) status.text = view.status
         battery.text = view.battery.label()
         for ((mode, button) in modes) {
@@ -488,13 +488,13 @@ class MainActivity : Activity() {
             lastControls = view.controls
             features.removeAllViews()
             if (view.controls.isNotEmpty()) features.addView(card().apply {
-                addView(text("型号专属功能", 19, bold = true))
+                addView(text(tr("model_specific_controls"), 19, bold = true))
                 for (group in view.controls) {
                     addView(text(group.title, 15, bold = true).apply { setPadding(0, dp(12), 0, 0) })
                     group.hint?.let { addView(text(it, 13, muted)) }
                     if (group.choices.size > 6) {
                         val selected = group.choices.indexOfFirst { it.selected }
-                        val summary = group.choices.getOrNull(selected)?.label ?: "选择设置"
+                        val summary = group.choices.getOrNull(selected)?.label ?: tr("choose_a_setting")
                         addView(action(summary) {
                             AlertDialog.Builder(this@MainActivity)
                                 .setTitle(group.title)
@@ -502,7 +502,7 @@ class MainActivity : Activity() {
                                     ControlState.command(group.choices[which].request)
                                     dialog.dismiss()
                                 }
-                                .setNegativeButton("取消", null)
+                                .setNegativeButton(tr("cancel"), null)
                                 .show()
                         })
                     } else {
@@ -519,10 +519,10 @@ class MainActivity : Activity() {
             lastApps = view.controlApps
             apps.removeAllViews()
             if (view.controlApps.isNotEmpty()) apps.addView(card().apply {
-                addView(text("厂商应用", 18, bold = true))
-                for (app in view.controlApps) addView(action("打开 ${app.displayName}") {
+                addView(text(tr("vendor_apps"), 18, bold = true))
+                for (app in view.controlApps) addView(action(tr("open_0", app.displayName)) {
                     val launch = packageManager.getLaunchIntentForPackage(app.packageName)
-                    if (launch == null) toast("请先安装 ${app.displayName}") else {
+                    if (launch == null) toast(tr("install_0_first", app.displayName)) else {
                         ControlState.service?.disconnect()
                         startActivity(launch)
                     }
@@ -536,7 +536,7 @@ class MainActivity : Activity() {
         val busy = ControlState.busy
         scan.isEnabled = !busy && !scanning
         devices.isEnabled = !busy && !scanning
-        connect.text = if (busy) "断开" else "连接"
+        connect.text = if (busy) tr("disconnect") else tr("connect")
         connect.isEnabled = if (busy) ControlState.service?.active == true else !scanning && devices.selectedItem != null
         style(scan, false)
         style(connect, true)
@@ -560,7 +560,7 @@ class MainActivity : Activity() {
             val action = permissionAction ?: ::discover
             permissionAction = null
             if (results.isNotEmpty() && results.all { it == PackageManager.PERMISSION_GRANTED }) action()
-            else status.text = "需要蓝牙权限才能发现和控制耳机。"
+            else status.text = tr("bluetooth_access_is_needed_to_find_and")
         }
         if (code == 2) {
             ControlState.refreshSurfaces(this)

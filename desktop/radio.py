@@ -22,6 +22,10 @@ def encoded(text):
     return base64.b64encode(text.encode("utf-8")).decode("ascii")
 
 
+def localized(english, chinese):
+    return chinese if os.environ.get("UNIEAR_LOCALE") == "zh" else english
+
+
 async def paired_devices():
     if sys.platform == "win32":
         from winrt.windows.devices.bluetooth import BluetoothDevice
@@ -98,7 +102,8 @@ def characteristic(client, service, target, instance, properties):
     if instance:
         matches = [ch for ch in matches if ch.handle == int(instance)]
     if len(matches) != 1:
-        raise OSError(f"GATT 特征不可用或存在歧义：{target}")
+        raise OSError(localized(f"GATT characteristic unavailable or ambiguous: {target}",
+                                f"GATT 特征不可用或存在歧义：{target}"))
     return matches[0]
 
 
@@ -165,14 +170,15 @@ def sdp_channel(address, endpoint):
             number = protocol.find("uint8")
             if kind is not None and kind.get("value") == "0x0003" and number is not None:
                 return int(number.attrib["value"], 0)
-    raise OSError(f"SDP 未找到 RFCOMM 服务：{endpoint}")
+    raise OSError(localized(f"SDP could not find the RFCOMM service: {endpoint}", f"SDP 未找到 RFCOMM 服务：{endpoint}"))
 
 
 def classic_socket(address, endpoint, secure, l2cap):
     if sys.platform == "win32" and not l2cap:
         return windows_rfcomm(address, endpoint)
     if not sys.platform.startswith("linux"):
-        raise OSError("当前系统不提供此经典蓝牙控制通道")
+        raise OSError(localized("This OS does not expose the Classic Bluetooth control channel",
+                                "当前系统不提供此经典蓝牙控制通道"))
     protocol = socket.BTPROTO_L2CAP if l2cap else socket.BTPROTO_RFCOMM
     kind = socket.SOCK_SEQPACKET if l2cap else socket.SOCK_STREAM
     channel = int(endpoint) if endpoint.isdigit() else sdp_channel(address, endpoint)
@@ -250,7 +256,7 @@ async def main(command, *args):
     elif command in {"rfcomm", "l2cap"}:
         await classic(*args, l2cap=command == "l2cap")
     else:
-        raise ValueError("未知蓝牙操作")
+        raise ValueError(localized("Unknown Bluetooth operation", "未知蓝牙操作"))
 
 
 if __name__ == "__main__":

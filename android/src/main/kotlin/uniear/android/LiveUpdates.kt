@@ -1,5 +1,6 @@
 package uniear.android
 
+import uniear.core.tr
 import android.annotation.SuppressLint
 import android.annotation.TargetApi
 import android.app.Activity
@@ -43,9 +44,9 @@ internal object LiveUpdates {
     ) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (!manager.areNotificationsEnabled()) return
-        manager.createNotificationChannel(NotificationChannel(BLUETOOTH_CHANNEL, "蓝牙耳机连接实况",
+        manager.createNotificationChannel(NotificationChannel(BLUETOOTH_CHANNEL, tr("bluetooth_connection_updates"),
             NotificationManager.IMPORTANCE_LOW))
-        val status = if (acquired) "已取得控制权" else "蓝牙已连接"
+        val status = if (acquired) tr("control_ready") else tr("bluetooth_connected")
         val builder = Notification.Builder(context, BLUETOOTH_CHANNEL)
             .setSmallIcon(R.drawable.ic_headphones)
             .setOnlyAlertOnce(true)
@@ -57,8 +58,8 @@ internal object LiveUpdates {
             .setContentText(message)
             .setStyle(Notification.BigTextStyle().bigText(message))
             .setShowWhen(false)
-        if (connect != null) builder.addAction(Notification.Action.Builder(null, "连接", connect).build())
-        if (ignore != null) builder.addAction(Notification.Action.Builder(null, "忽略", ignore).build())
+        if (connect != null) builder.addAction(Notification.Action.Builder(null, tr("connect"), connect).build())
+        if (ignore != null) builder.addAction(Notification.Action.Builder(null, tr("ignore"), ignore).build())
         if (Build.VERSION.SDK_INT >= 36) {
             builder.setShortCriticalText(status)
                 .addExtras(Bundle().apply { putBoolean(REQUEST_PROMOTED_ONGOING, true) })
@@ -96,7 +97,7 @@ internal object LiveUpdates {
             .setShowWhen(false)
             .setStyle(Notification.ProgressStyle().setProgressIndeterminate(true))
             .addExtras(Bundle().apply { putBoolean(REQUEST_PROMOTED_ONGOING, true) })
-            .addAction(Notification.Action.Builder(null, "取消连接", cancel).build())
+            .addAction(Notification.Action.Builder(null, tr("cancel_connection"), cancel).build())
             .build()
     }
 }

@@ -1,5 +1,6 @@
 package uniear.android
 
+import uniear.core.tr
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -53,7 +54,7 @@ internal class FloatingControls(private val context: Context) {
         }
         rendered = key
         root.removeAllViews()
-        root.addView(action("UniEar · ${view.mode?.label() ?: "耳机模式"}  ${if (expanded) "▴" else "▾"}") {
+        root.addView(action("UniEar · ${view.mode?.label() ?: tr("headphone_modes")}  ${if (expanded) "▴" else "▾"}") {
             expanded = !expanded
             rendered = null
             render(ControlState.view)
@@ -67,7 +68,7 @@ internal class FloatingControls(private val context: Context) {
                     render(ControlState.view)
                 })
             }
-            root.addView(action("打开 UniEar") {
+            root.addView(action(tr("open_uniear")) {
                 context.startActivity(QuickControls.appIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             })
         }

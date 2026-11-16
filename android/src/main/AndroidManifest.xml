@@ -23,12 +23,13 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
-    <application android:label="UniEar" android:icon="@drawable/ic_headphones" android:theme="@style/UniEarTheme"
+    <application android:name=".UniEarApplication" android:label="UniEar" android:icon="@drawable/ic_headphones"
+        android:theme="@style/UniEarTheme" android:localeConfig="@xml/locales_config"
         android:allowBackup="false">
         <service android:name=".ControlSessionService" android:exported="false"
             android:foregroundServiceType="connectedDevice|location" />
         <service android:name=".EarbudTile" android:exported="true"
-            android:label="耳机模式" android:icon="@drawable/ic_headphones"
+            android:label="@string/tile_label" android:icon="@drawable/ic_headphones"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
@@ -47,7 +48,7 @@
                 <action android:name="android.bluetooth.action.LE_AUDIO_CONNECTION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
-        <receiver android:name=".EarbudWidget" android:exported="false" android:label="UniEar 耳机控制">
+        <receiver android:name=".EarbudWidget" android:exported="false" android:label="@string/widget_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

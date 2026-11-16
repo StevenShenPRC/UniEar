@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 data class Headset(val identity: EarbudIdentity, val advertisement: GattPeerIdentity? = null) {
     val address: String get() = requireNotNull(identity.deviceAddress)
-    override fun toString() = "${identity.deviceName ?: "未知设备"}  ·  $address"
+    override fun toString() = "${identity.deviceName ?: tr("unknown_device")}  ·  $address"
 }
 
 fun GattPeerSelection.CompanionDevice.matchesPeer(
@@ -61,18 +61,18 @@ data class HeadsetView(
 )
 
 fun NoiseMode.label(): String = when (this) {
-    NoiseMode.ANC -> "降噪"
-    NoiseMode.TRANSPARENCY -> "通透"
-    NoiseMode.OFF -> "关闭"
-    NoiseMode.WIND -> "抗风噪"
+    NoiseMode.ANC -> tr("noise_canceling")
+    NoiseMode.TRANSPARENCY -> tr("transparency")
+    NoiseMode.OFF -> tr("off")
+    NoiseMode.WIND -> tr("wind_reduction")
 }
 
 fun EarbudBattery.label(): String {
     fun item(name: String, value: BatteryReading) =
-        value.percent?.let { "$name $it%${if (value.charging) "（充电中）" else ""}" }
-    return if (overall.available) item("整机", overall).orEmpty()
-    else listOfNotNull(item("左耳", left), item("右耳", right), item("充电盒", case))
-        .joinToString("  ·  ").ifBlank { "电量未知" }
+        value.percent?.let { "$name $it%${if (value.charging) tr("charging") else ""}" }
+    return if (overall.available) item(tr("headphones"), overall).orEmpty()
+    else listOfNotNull(item(tr("left"), left), item(tr("right"), right), item(tr("case"), case))
+        .joinToString("  ·  ").ifBlank { tr("battery_level_unknown") }
 }
 
 /** All adapter calls and outbound transactions run on the same executor. */
@@ -90,7 +90,7 @@ class HeadsetSession(
     private val systemObserver = AtomicReference<Closeable?>()
     private var systemBattery: Int? = null
     private var systemOnly = false
-    private var status = "正在识别耳机…"
+    private var status = tr("identifying_headphones")
     private var endpoint: String? = null
     private var candidate = 0
     private var replacements = 0
@@ -107,7 +107,7 @@ class HeadsetSession(
         enqueue {
             adapter = EarbudAdapterRegistry.forIntegration(headset.identity)
             if (adapter == null) {
-                publish("此设备由系统蓝牙管理", ended = true)
+                publish(tr("these_headphones_are_managed_by_system_bluetooth"), ended = true)
                 return@enqueue
             }
             observeSystemProfile()
@@ -131,7 +131,7 @@ class HeadsetSession(
                     closeLink()
                     endpoint = null
                     systemBattery = null
-                    publish("耳机已断开", ended = true)
+                    publish(tr("headphones_disconnected"), ended = true)
                 }
             })
         }.getOrNull()
@@ -173,7 +173,7 @@ class HeadsetSession(
         while (!stopped.get() && candidate < current.transports.size) {
             val spec = current.transports[candidate++]
             endpoint = spec.id
-            publish("正在连接…")
+            publish(tr("connecting"))
             try {
                 current.resetProtocolSession()
                 current.onSystemBatteryChanged(systemBattery)
@@ -207,7 +207,7 @@ class HeadsetSession(
         endpoint = null
         systemOnly = true
         ready = true
-        val summary = if (failures.isEmpty()) "系统蓝牙" else "系统蓝牙 · 专有控制不可用"
+        val summary = if (failures.isEmpty()) tr("system_bluetooth") else tr("system_bluetooth_private_controls_unavailable")
         publish((listOf(summary) + failures.distinct()).joinToString("\n"))
     }
 
@@ -217,13 +217,13 @@ class HeadsetSession(
         when (initial.handshake) {
             HandshakeResult.Ready -> markReady()
             HandshakeResult.AwaitingEvidence, null -> {
-                publish("正在确认耳机协议…")
+                publish(tr("checking_the_headphone_protocol"))
                 deadline?.cancel(false)
                 deadline = worker.schedule({
-                    if (link === opened && !ready) fail(opened, "等待协议响应超时")
+                    if (link === opened && !ready) fail(opened, tr("timed_out_waiting_for_a_protocol_response"))
                 }, 8000, MILLISECONDS)
             }
-            else -> throw IOException("耳机协议初始化失败")
+            else -> throw IOException(tr("could_not_initialize_the_headphone_protocol"))
         }
     }
 
@@ -234,9 +234,9 @@ class HeadsetSession(
                     val frame = opened.read() ?: break
                     enqueue { receive(opened, frame) }
                 }
-                enqueue { fail(opened, "耳机已断开") }
+                enqueue { fail(opened, tr("headphones_disconnected")) }
             } catch (error: Exception) {
-                enqueue { fail(opened, error.message ?: "读取蓝牙数据失败") }
+                enqueue { fail(opened, error.message ?: tr("could_not_read_bluetooth_data")) }
             }
         }, "UniEar Bluetooth receive").apply { isDaemon = true }.start()
     }
@@ -249,7 +249,7 @@ class HeadsetSession(
             send(opened, result.commands, 0)
             when (val handshake = result.handshake) {
                 HandshakeResult.Ready -> markReady()
-                HandshakeResult.Rejected -> throw IOException("耳机拒绝协议握手")
+                HandshakeResult.Rejected -> throw IOException(tr("the_headphones_rejected_the_protocol_handshake"))
                 is HandshakeResult.Replace -> replace(opened, handshake)
                 else -> Unit
             }
@@ -258,12 +258,12 @@ class HeadsetSession(
                 if (result.stateChanged && ready && result.handshake != HandshakeResult.Ready) publish(status)
             }
         } catch (error: Exception) {
-            fail(opened, error.message ?: "处理耳机响应失败")
+            fail(opened, error.message ?: tr("could_not_process_the_headphone_response"))
         }
     }
 
     private fun replace(opened: HeadsetLink, replacement: HandshakeResult.Replace) {
-        check(++replacements <= 8) { "型号识别反复切换" }
+        check(++replacements <= 8) { tr("repeated_headphone_model_changes") }
         cancelQueries()
         deadline?.cancel(false)
         ready = false
@@ -286,7 +286,7 @@ class HeadsetSession(
     private fun markReady() {
         ready = true
         deadline?.cancel(false)
-        publish("已连接")
+        publish(tr("connected"))
     }
 
     fun control(request: ControlRequest) = enqueue {
@@ -317,7 +317,7 @@ class HeadsetSession(
                 }
             }
         } catch (error: Exception) {
-            fail(opened, error.message ?: "发送指令失败")
+            fail(opened, error.message ?: tr("could_not_send_the_command"))
         }
     }
 
@@ -336,7 +336,7 @@ class HeadsetSession(
                         try {
                             send(opened, current.queryState(effect.featureId), 120)
                         } catch (error: Exception) {
-                            fail(opened, error.message ?: "读取状态失败")
+                            fail(opened, error.message ?: tr("could_not_read_status"))
                         }
                     }
                 }, effect.delayMs, MILLISECONDS)
@@ -347,7 +347,7 @@ class HeadsetSession(
     private fun send(opened: HeadsetLink, frames: List<ByteArray>, gapMs: Long) {
         frames.forEachIndexed { index, frame ->
             if (index > 0 && gapMs > 0) Thread.sleep(gapMs)
-            if (stopped.get() || link !== opened) throw IOException("连接已关闭")
+            if (stopped.get() || link !== opened) throw IOException(tr("connection_closed"))
             opened.write(frame)
         }
     }
@@ -355,7 +355,7 @@ class HeadsetSession(
     private fun fail(opened: HeadsetLink, message: String) {
         if (link !== opened || stopped.get()) return
         val wasReady = ready
-        failures.add("${endpoint ?: "蓝牙"}：$message")
+        failures.add("${endpoint ?: tr("bluetooth")}：$message")
         closeLink()
         if (wasReady) {
             endpoint = null

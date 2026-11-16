@@ -21,12 +21,12 @@ private class DesktopApp {
     private val radio = DesktopRadio()
     private val frame = JFrame("UniEar")
     private val devices = JComboBox<Headset>()
-    private val scan = JButton("扫描")
-    private val connect = JButton("连接")
-    private val disconnect = JButton("断开")
-    private val refresh = JButton("刷新")
-    private val model = JLabel("选择一台耳机")
-    private val battery = JLabel("电量未知")
+    private val scan = JButton(tr("scan"))
+    private val connect = JButton(tr("connect"))
+    private val disconnect = JButton(tr("disconnect"))
+    private val refresh = JButton(tr("refresh"))
+    private val model = JLabel(tr("select_headphones"))
+    private val battery = JLabel(tr("battery_level_unknown"))
     private val modeButtons = NoiseMode.entries.associateWith { JButton(it.label()) }
     private val features = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
     private var shownControls: List<ControlGroup> = emptyList()
@@ -83,10 +83,10 @@ private class DesktopApp {
             generation++
             session?.close()
             session = null
-            render(HeadsetView("已断开"))
+            render(HeadsetView(tr("disconnected")))
         }
         refresh.addActionListener { session?.refresh() }
-        render(HeadsetView("扫描已配对耳机和附近的蓝牙设备。"))
+        render(HeadsetView(tr("scan_for_paired_headphones_and_nearby_bluetooth")))
         frame.minimumSize = Dimension(650, 420)
         frame.pack()
         frame.setLocationRelativeTo(null)
@@ -96,17 +96,17 @@ private class DesktopApp {
     private fun scan() {
         scanning = true
         updateButtons()
-        status.text = "正在扫描蓝牙设备…"
+        status.text = tr("scanning_for_bluetooth_devices")
         object : SwingWorker<List<Headset>, Void>() {
             override fun doInBackground() = radio.discover()
             override fun done() {
                 try {
                     val peers = get()
                     devices.model = DefaultComboBoxModel(peers.toTypedArray())
-                    status.text = if (peers.isEmpty()) "未发现设备。请开启蓝牙并确认耳机可连接。"
-                    else "找到 ${peers.size} 台设备。"
+                    status.text = if (peers.isEmpty()) tr("no_devices_found_turn_on_bluetooth_and")
+                    else tr("devices_found_0", peers.size)
                 } catch (error: Exception) {
-                    status.text = error.cause?.message ?: error.message ?: "扫描失败"
+                    status.text = error.cause?.message ?: error.message ?: tr("scan_failed")
                 } finally {
                     scanning = false
                     updateButtons()
@@ -122,7 +122,7 @@ private class DesktopApp {
         session = HeadsetSession(radio, selected) { view ->
             SwingUtilities.invokeLater { if (active == generation && frame.isDisplayable) render(view) }
         }
-        render(HeadsetView("正在识别耳机…"))
+        render(HeadsetView(tr("identifying_headphones")))
     }
 
     private fun render(view: HeadsetView) {
@@ -131,7 +131,7 @@ private class DesktopApp {
             session?.close()
             session = null
         }
-        model.text = view.model ?: "选择一台耳机"
+        model.text = view.model ?: tr("select_headphones")
         battery.text = view.battery.label()
         status.text = listOfNotNull(view.endpoint, view.status).joinToString("\n")
         for ((mode, button) in modeButtons) {
@@ -149,7 +149,7 @@ private class DesktopApp {
                     val selection = JComboBox(group.choices.map { it.label }.toTypedArray())
                     selection.selectedIndex = group.choices.indexOfFirst { it.selected }
                     choices.add(selection)
-                    choices.add(JButton("应用").apply {
+                    choices.add(JButton(tr("apply")).apply {
                         isEnabled = selection.selectedIndex >= 0
                         selection.addActionListener { isEnabled = selection.selectedIndex >= 0 }
                         addActionListener {
