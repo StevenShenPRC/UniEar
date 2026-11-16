@@ -1,5 +1,6 @@
 package uniear.android
 
+import android.annotation.SuppressLint
 import android.annotation.TargetApi
 import android.app.Activity
 import android.app.Notification
@@ -12,7 +13,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.annotation.SuppressLint
 import uniear.core.HeadsetView
 
 internal object LiveUpdates {
@@ -33,27 +33,37 @@ internal object LiveUpdates {
     }
 
     @SuppressLint("MissingPermission")
-    fun showBluetoothConnection(context: Context, model: String?, connected: Boolean) {
-        if (Build.VERSION.SDK_INT < 36) return
+    fun showBluetoothConnection(
+        context: Context,
+        model: String?,
+        message: String,
+        acquired: Boolean = false,
+        connect: PendingIntent? = null,
+        ignore: PendingIntent? = null,
+    ) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (!manager.areNotificationsEnabled()) return
         manager.createNotificationChannel(NotificationChannel(BLUETOOTH_CHANNEL, "蓝牙耳机连接实况",
             NotificationManager.IMPORTANCE_LOW))
+        val status = if (acquired) "已取得控制权" else "蓝牙已连接"
         val builder = Notification.Builder(context, BLUETOOTH_CHANNEL)
             .setSmallIcon(R.drawable.ic_headphones)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setContentIntent(QuickControls.openApp(context))
             .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setTimeoutAfter(6_000)
-        val view = HeadsetView(if (connected) "蓝牙耳机已连接" else "正在建立蓝牙音频连接…", model = model)
-        val notice = if (connected) {
-            builder.setContentTitle(model ?: "UniEar").setContentText(view.status)
-                .setShortCriticalText("已连接").setShowWhen(false)
+            .setTimeoutAfter(HeadsetConnection.NOTICE_DURATION)
+            .setContentTitle(if (model.isNullOrBlank()) status else "$status · $model")
+            .setContentText(message)
+            .setStyle(Notification.BigTextStyle().bigText(message))
+            .setShowWhen(false)
+        if (connect != null) builder.addAction(Notification.Action.Builder(null, "连接", connect).build())
+        if (ignore != null) builder.addAction(Notification.Action.Builder(null, "忽略", ignore).build())
+        if (Build.VERSION.SDK_INT >= 36) {
+            builder.setShortCriticalText(status)
                 .addExtras(Bundle().apply { putBoolean(REQUEST_PROMOTED_ONGOING, true) })
-                .build()
-        } else connectionNotification(builder, view)
-        runCatching { manager.notify(BLUETOOTH_NOTICE, notice) }
+        }
+        runCatching { manager.notify(BLUETOOTH_NOTICE, builder.build()) }
     }
 
     fun dismissBluetoothConnection(context: Context) {
@@ -77,15 +87,16 @@ internal object LiveUpdates {
     fun connectionNotification(
         builder: Notification.Builder,
         view: HeadsetView,
-        cancel: PendingIntent? = null,
+        cancel: PendingIntent,
+        status: String,
     ): Notification {
-        builder.setContentTitle(view.model?.takeIf { it.isNotBlank() } ?: "UniEar")
+        return builder.setContentTitle(view.model?.takeIf { it.isNotBlank() } ?: "UniEar")
             .setContentText(view.status)
-            .setShortCriticalText("连接中")
+            .setShortCriticalText(status)
             .setShowWhen(false)
             .setStyle(Notification.ProgressStyle().setProgressIndeterminate(true))
             .addExtras(Bundle().apply { putBoolean(REQUEST_PROMOTED_ONGOING, true) })
-        if (cancel != null) builder.addAction(Notification.Action.Builder(null, "取消连接", cancel).build())
-        return builder.build()
+            .addAction(Notification.Action.Builder(null, "取消连接", cancel).build())
+            .build()
     }
 }

@@ -9,8 +9,8 @@ android {
         applicationId = "dev.uniear.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.3.1"
+        versionCode = 7
+        versionName = "0.3.2"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

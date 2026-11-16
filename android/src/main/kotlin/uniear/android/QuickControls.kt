@@ -48,7 +48,7 @@ internal object QuickControls {
             Intent(context, ControlReceiver::class.java).setData(uri), FLAGS)
     }
 
-    fun notification(context: Context, view: HeadsetView, token: String, connecting: Boolean): Notification {
+    fun notification(context: Context, view: HeadsetView, token: String, connecting: Boolean, automatic: Boolean): Notification {
         val manager = requireNotNull(context.getSystemService(NotificationManager::class.java))
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "耳机控制会话", NotificationManager.IMPORTANCE_LOW))
         val builder = Notification.Builder(context, CHANNEL)
@@ -58,9 +58,9 @@ internal object QuickControls {
             .setContentIntent(openApp(context))
             .setVisibility(Notification.VISIBILITY_PRIVATE)
         if (Build.VERSION.SDK_INT >= 31) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-        if (connecting && Build.VERSION.SDK_INT >= 36 && Surface.LIVE_UPDATE.enabled(context)) {
+        if (connecting && Build.VERSION.SDK_INT >= 36 && (automatic || Surface.LIVE_UPDATE.enabled(context))) {
             val cancel = controlIntent(context, Surface.LIVE_UPDATE, token, CANCEL_CONNECTION)
-            return LiveUpdates.connectionNotification(builder, view, cancel)
+            return LiveUpdates.connectionNotification(builder, view, cancel, if (automatic) "蓝牙已连接" else "连接中")
         }
         val showControls = Surface.NOTIFICATION.enabled(context)
         val text = if (showControls && view.ready) {
@@ -100,11 +100,11 @@ internal object QuickControls {
         }
     }
 
-    fun updateNotification(context: Context, view: HeadsetView, token: String, connecting: Boolean) {
+    fun updateNotification(context: Context, view: HeadsetView, token: String, connecting: Boolean, automatic: Boolean) {
         if (Build.VERSION.SDK_INT >= 33 &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         context.getSystemService(NotificationManager::class.java)
-            ?.notify(NOTIFICATION_ID, notification(context, view, token, connecting))
+            ?.notify(NOTIFICATION_ID, notification(context, view, token, connecting, automatic))
     }
 }
 

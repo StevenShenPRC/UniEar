@@ -217,18 +217,26 @@ class MainActivity : Activity() {
             renderNetworkRules()
         })
         page.addView(card().apply {
+            addView(text("耳机连接", 21, bold = true))
+            addSetting(this, Surface.AUTO_CONNECT, "自动建立控制连接", "系统蓝牙连上支持的耳机后自动尝试，最多三次。成功后提示已取得控制权。")
+            addSetting(this, Surface.LIVE_UPDATE, "耳机连接实况", "关闭自动连接时，通知会保留约 30 秒，可选择连接或忽略。")
+            addView(action("授权检测蓝牙连接") {
+                withBluetooth(true) {
+                    askNotificationPermission()
+                    updateSettingsStatus()
+                }
+            })
+            if (CompanionHeadsets.available(this@MainActivity)) {
+                addView(action("关联耳机以允许后台自动连接") { selectCompanionHeadset() })
+            }
+            if (LiveUpdates.supported) addView(action("管理实况通知权限") {
+                if (!LiveUpdates.openSettings(this@MainActivity)) toast("请在系统设置中检查 UniEar 的通知权限。")
+            })
+        })
+        page.addView(card().apply {
             addView(text("快捷控制", 21, bold = true))
             addView(text("先在设备页连接耳机，再从各入口切换已支持的模式。", 14, muted))
             addSetting(this, Surface.NOTIFICATION, "通知中心菜单", "折叠时可切换模式，展开后查看耳机信息。")
-            if (LiveUpdates.supported) {
-                addSetting(this, Surface.LIVE_UPDATE, "耳机连接实况", "系统蓝牙连接耳机时自动显示。手动建立控制连接时也可查看进度和取消。")
-                addView(action("授权检测蓝牙连接") {
-                    withBluetooth(false) { updateSettingsStatus() }
-                })
-                addView(action("管理实况通知权限") {
-                    if (!LiveUpdates.openSettings(this@MainActivity)) toast("请在系统设置中检查 UniEar 的通知权限。")
-                })
-            }
             addSetting(this, Surface.TILE, "控制中心磁贴", "点按轮换模式，长按打开 UniEar。")
             addView(action("添加到控制中心") { addTile() })
             addSetting(this, Surface.WIDGET, "桌面小组件", "显示耳机状态和各模式按钮。")
@@ -333,7 +341,10 @@ class MainActivity : Activity() {
             isChecked = surface.enabled(this@MainActivity)
             setOnCheckedChangeListener { _, enabled ->
                 surface.set(this@MainActivity, enabled)
-                if (enabled && (surface == Surface.NOTIFICATION || surface == Surface.LIVE_UPDATE)) askNotificationPermission()
+                if (enabled && surface == Surface.NOTIFICATION) askNotificationPermission()
+                if (enabled && (surface == Surface.LIVE_UPDATE || surface == Surface.AUTO_CONNECT)) {
+                    withBluetooth(true) { askNotificationPermission() }
+                }
                 if (enabled && surface == Surface.CAPSULE && !Settings.canDrawOverlays(this@MainActivity)) {
                     overlaySettings()
                 }
@@ -353,19 +364,34 @@ class MainActivity : Activity() {
     private fun updateSettingsStatus() {
         val notes = mutableListOf<String>()
         if (Surface.CAPSULE.enabled(this) && !Settings.canDrawOverlays(this)) notes += "悬浮胶囊等待系统授权。"
-        if (LiveUpdates.supported && Surface.LIVE_UPDATE.enabled(this) && !LiveUpdates.canPostPromotedNotifications(this)) {
+        if (LiveUpdates.supported && HeadsetConnection.enabled(this) && !LiveUpdates.canPostPromotedNotifications(this)) {
             notes += "请在系统设置中允许 UniEar 显示实况通知。"
         }
-        if (LiveUpdates.supported && Surface.LIVE_UPDATE.enabled(this) &&
-            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+        if (HeadsetConnection.enabled(this) && !HeadsetConnection.hasBluetoothPermission(this)) {
             notes += "自动显示耳机连接实况需要附近设备权限。"
         }
-        if ((Surface.NOTIFICATION.enabled(this) || Surface.LIVE_UPDATE.enabled(this)) &&
+        if ((Surface.NOTIFICATION.enabled(this) || HeadsetConnection.enabled(this)) &&
             getSystemService(android.app.NotificationManager::class.java)?.areNotificationsEnabled() == false) {
             notes += "请在系统设置中允许 UniEar 通知。"
         }
         settingsStatus.text = notes.joinToString("\n")
         settingsStatus.visibility = if (notes.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    private fun selectCompanionHeadset() = withBluetooth(true) {
+        if (ControlState.busy) {
+            toast("请先断开 UniEar 的控制连接，保留系统蓝牙连接。")
+            return@withBluetooth
+        }
+        queryHeadsets { connected ->
+            val peers = connected.filter(HeadsetConnection::canControl)
+            if (peers.isEmpty()) toast("请先在系统蓝牙中连接一副支持控制的耳机。")
+            else AlertDialog.Builder(this).setTitle("选择要关联的耳机")
+                .setItems(peers.map { it.identity.deviceName ?: it.address }.toTypedArray()) { _, index ->
+                    runCatching { CompanionHeadsets.associate(this, peers[index], ::toast) }
+                        .onFailure { toast("系统未能关联这副耳机。") }
+                }.setNegativeButton("取消", null).show()
+        }
     }
 
     private fun overlaySettings() {
