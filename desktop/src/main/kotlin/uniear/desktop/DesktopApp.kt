@@ -12,11 +12,23 @@ import java.awt.GridLayout
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.util.Locale
+import java.util.prefs.Preferences
 import javax.swing.*
 
-fun main() = SwingUtilities.invokeLater {
-    UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-    DesktopApp().show()
+private val preferences = Preferences.userNodeForPackage(DesktopApp::class.java)
+private const val LANGUAGE = "appLanguage"
+
+fun main(args: Array<String>) {
+    if (args.contentEquals(arrayOf("--check-runtime"))) {
+        println(DesktopRadio().checkRuntime())
+        println(tr("language"))
+        return
+    }
+    SwingUtilities.invokeLater {
+        preferences.get(LANGUAGE, null)?.let { Translations.setLocale(Locale.forLanguageTag(it)) }
+        UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+        DesktopApp().show()
+    }
 }
 
 private class DesktopApp {
@@ -27,6 +39,7 @@ private class DesktopApp {
     private val connect = JButton(tr("connect"))
     private val disconnect = JButton(tr("disconnect"))
     private val refresh = JButton(tr("refresh"))
+    private val language = JButton(tr("language"))
     private val model = JLabel(tr("select_headphones"))
     private val battery = JLabel(tr("battery_level_unknown"))
     private val modeButtons = NoiseMode.entries.associateWith { JButton(it.label()) }
@@ -55,6 +68,7 @@ private class DesktopApp {
                 add(scan)
                 add(connect)
                 add(disconnect)
+                add(language)
             }, BorderLayout.EAST)
         }, BorderLayout.CENTER)
         content.add(header, BorderLayout.NORTH)
@@ -88,12 +102,29 @@ private class DesktopApp {
             render(HeadsetView(tr("disconnected")))
         }
         refresh.addActionListener { session?.refresh() }
+        language.addActionListener { chooseLanguage() }
         render(HeadsetView(tr("scan_for_paired_headphones_and_nearby_bluetooth")))
         frame.minimumSize = Dimension(650, 420)
-        frame.applyComponentOrientation(ComponentOrientation.getOrientation(Locale.getDefault()))
+        frame.applyComponentOrientation(ComponentOrientation.getOrientation(Translations.locale))
         frame.pack()
         frame.setLocationRelativeTo(null)
         frame.isVisible = true
+    }
+
+    private fun chooseLanguage() {
+        val choices = Translations.languageChoices.entries.toList()
+        val labels = listOf(tr("follow_system_language")) + choices.map { it.value }
+        val current = preferences.get(LANGUAGE, null)
+        val index = choices.indexOfFirst { it.key == current } + 1
+        val picker = JComboBox(labels.toTypedArray()).apply { selectedIndex = index }
+        val result = JOptionPane.showOptionDialog(frame, picker, tr("language"), JOptionPane.OK_CANCEL_OPTION,
+            JOptionPane.PLAIN_MESSAGE, null, arrayOf(tr("apply"), tr("cancel")), null)
+        if (result != JOptionPane.OK_OPTION || picker.selectedIndex == index) return
+        val tag = choices.getOrNull(picker.selectedIndex - 1)?.key
+        if (tag == null) preferences.remove(LANGUAGE) else preferences.put(LANGUAGE, tag)
+        Translations.setLocale(tag?.let(Locale::forLanguageTag))
+        frame.dispose()
+        DesktopApp().show()
     }
 
     private fun scan() {
@@ -147,6 +178,7 @@ private class DesktopApp {
             features.removeAll()
             for (group in shownControls) {
                 val choices = JPanel(FlowLayout(FlowLayout.LEADING))
+                choices.componentOrientation = frame.componentOrientation
                 choices.border = BorderFactory.createTitledBorder(group.title)
                 if (group.choices.size > 6) {
                     val selection = JComboBox(group.choices.map { it.label }.toTypedArray())
@@ -181,5 +213,6 @@ private class DesktopApp {
         connect.isEnabled = session == null && !scanning && devices.selectedItem != null
         devices.isEnabled = session == null && !scanning
         scan.isEnabled = session == null && !scanning
+        language.isEnabled = session == null && !scanning
     }
 }

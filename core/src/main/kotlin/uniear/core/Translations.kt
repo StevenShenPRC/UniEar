@@ -5,7 +5,11 @@ import java.util.PropertyResourceBundle
 import java.util.ResourceBundle
 
 object Translations {
-    internal val supportedLanguages = setOf("en", "ar", "es", "fr", "ru", "zh")
+    val languageChoices = linkedMapOf(
+        "en" to "English", "ar" to "العربية", "es" to "Español",
+        "fr" to "Français", "ru" to "Русский", "zh-Hans" to "简体中文",
+    )
+    internal val supportedLanguages = languageChoices.keys.map { Locale.forLanguageTag(it).language }.toSet()
     private val catalogs = supportedLanguages.associateWith { language ->
         lazy { load(if (language == "en") "messages.properties" else "messages_$language.properties") }
     }
@@ -17,6 +21,8 @@ object Translations {
         preferredLocale = locale
     }
 
+    val locale: Locale get() = preferredLocale ?: Locale.getDefault()
+
     internal fun forLocale(locale: Locale): ResourceBundle =
         catalogs.getValue(locale.language.takeIf(catalogs::containsKey) ?: "en").value
 
@@ -25,7 +31,7 @@ object Translations {
     ).reader(Charsets.UTF_8).use(::PropertyResourceBundle)
 
     internal fun text(key: String, arguments: Array<out Any?>): String {
-        val catalog = forLocale(preferredLocale ?: Locale.getDefault())
+        val catalog = forLocale(locale)
         val template = if (catalog.containsKey(key)) catalog.getString(key) else catalogs.getValue("en").value.getString(key)
         return if (arguments.isEmpty()) template else placeholder.replace(template) { match ->
             arguments[match.groupValues[1].toInt()].toString()

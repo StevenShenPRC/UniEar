@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.app.StatusBarManager
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -64,7 +65,10 @@ class MainActivity : Activity() {
 
     private data class DeviceSelection(val devices: List<Headset>, val address: String?)
 
+    override fun attachBaseContext(base: Context) = super.attachBaseContext(AppLanguage.localize(base))
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppLanguage.update(applicationContext)
         dark = getPreferences(MODE_PRIVATE).getBoolean("dark_mode", false)
         setTheme(if (dark) R.style.UniEarDarkTheme else R.style.UniEarTheme)
         super.onCreate(savedInstanceState)
@@ -184,6 +188,11 @@ class MainActivity : Activity() {
     private fun buildSettingsPage(page: LinearLayout) {
         page.addView(card().apply {
             addView(text(tr("appearance"), 21, bold = true))
+            val language = AppLanguage.selected(this@MainActivity)
+            val label = Translations.languageChoices.entries.firstOrNull {
+                java.util.Locale.forLanguageTag(it.key).language == language?.language
+            }?.value ?: tr("follow_system_language")
+            addView(action(tr("language_setting", label)) { selectLanguage() })
             addView(Switch(this@MainActivity).apply {
                 text = tr("dark_mode")
                 textSize = 16f
@@ -249,6 +258,27 @@ class MainActivity : Activity() {
             addView(text(tr("vendor_integrations"), 18, bold = true))
             addView(text(tr("huawei_live_view_oppo_fluid_cloud_vivo"), 14, muted))
         })
+    }
+
+    private fun selectLanguage() {
+        val choices = Translations.languageChoices.entries.toList()
+        val current = AppLanguage.selected(this)?.language
+        val index = choices.indexOfFirst { java.util.Locale.forLanguageTag(it.key).language == current } + 1
+        val labels = listOf(tr("follow_system_language")) + choices.map { it.value }
+        AlertDialog.Builder(this).setTitle(tr("language"))
+            .setSingleChoiceItems(labels.toTypedArray(), index) { dialog, selected ->
+                dialog.dismiss()
+                if (selected != index) {
+                    AppLanguage.set(this, choices.getOrNull(selected - 1)?.key)
+                    if (Build.VERSION.SDK_INT < 33) {
+                        AppLanguage.update(applicationContext)
+                        ControlState.refreshSurfaces(this)
+                        recreate()
+                    }
+                }
+            }
+            .setNegativeButton(tr("cancel"), null)
+            .show()
     }
 
     private fun updateNetworkRules(rules: NetworkRules) {

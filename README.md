@@ -2,6 +2,8 @@
 
 [中文使用指南](docs/zh/guide.md) · [English guide](docs/guide.md) · [Releases](https://github.com/StevenShenPRC/UniEar/releases)
 
+Android 可在「设置 → 外观」切换应用语言。桌面端可在主窗口中选择语言。两端都支持六种语言及跟随系统。Windows、Linux 和 macOS 的桌面包由 [Desktop packages](https://github.com/StevenShenPRC/UniEar/actions/workflows/desktop.yml) 生成，安装及蓝牙依赖见 [桌面安装说明](desktop/INSTALL.md)。
+
 UniEar 是一个普通应用，用于读取蓝牙耳机的电量和降噪状态，并切换当前型号支持的降噪、通透、关闭或抗风噪模式。先在系统设置中配对耳机，然后在 UniEar 中扫描、选择并连接。
 
 | 平台 | 当前传输实现 |
