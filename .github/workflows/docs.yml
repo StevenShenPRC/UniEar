@@ -11,7 +11,26 @@ permissions:
   contents: read
 
 jobs:
+  pages:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: read
+    outputs:
+      base_path: ${{ steps.pages.outputs.base_path }}
+    steps:
+      - id: pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+      - name: Report missing Pages configuration
+        if: steps.pages.outcome == 'failure'
+        run: |
+          echo '::error::GitHub Pages is unavailable. Check Settings → Pages and select GitHub Actions as the source. Private repositories require a GitHub plan that supports private Pages.'
+          exit 1
+
   docs:
+    needs: pages
+    if: always() && !cancelled()
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -27,20 +46,19 @@ jobs:
       - run: npm run build
         working-directory: docs
         env:
-          DOCS_BASE: /${{ github.event.repository.name }}/
+          DOCS_BASE: ${{ needs.pages.result == 'success' && format('{0}/', needs.pages.outputs.base_path) || format('/{0}/', github.event.repository.name) }}
       - uses: actions/upload-artifact@v4
         with:
           name: UniEar-documentation
           path: docs/.vitepress/dist/
           if-no-files-found: error
       - uses: actions/upload-pages-artifact@v3
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: needs.pages.result == 'success'
         with:
           path: docs/.vitepress/dist/
 
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: docs
+    needs: [pages, docs]
     runs-on: ubuntu-24.04
     permissions:
       pages: write
