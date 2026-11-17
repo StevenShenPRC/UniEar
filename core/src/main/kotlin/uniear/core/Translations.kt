@@ -32,7 +32,8 @@ object Translations {
         }
     }
 
-    private val placeholder = Regex("\\{([0-9]+)}")
+    // Android's ICU regex engine requires both braces to be escaped.
+    private val placeholder = Regex("\\{([0-9]+)\\}")
 }
 
 fun tr(key: String, vararg arguments: Any?): String = Translations.text(key, arguments)

@@ -8,7 +8,7 @@ class TranslationsTest {
     @Test
     fun officialLanguagesHaveTheSameKeysAndArguments() {
         val english = Translations.forLocale(Locale.ENGLISH)
-        val placeholder = Regex("\\{[0-9]+}")
+        val placeholder = Regex("\\{[0-9]+\\}")
         for (language in Translations.supportedLanguages - "en") {
             val translated = Translations.forLocale(Locale.forLanguageTag(language))
             assertEquals(language, english.keySet(), translated.keySet())
