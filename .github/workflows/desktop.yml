@@ -62,13 +62,19 @@ jobs:
           $version = (Select-String -Path android/build.gradle.kts -Pattern 'versionName\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
           $inputDir = 'desktop/build/install/desktop/lib'
           Copy-Item desktop/build/install/desktop/radio "$inputDir/radio" -Recurse
-          jpackage --type app-image --name UniEar --app-version $version --input $inputDir `
+          $packageVersion = $version
+          if ($IsMacOS) {
+            # CFBundleVersion must start with a positive number even for pre-1.0 releases.
+            $packageVersion = (Select-String -Path android/build.gradle.kts -Pattern 'versionCode\s*=\s*(\d+)').Matches[0].Groups[1].Value
+          }
+          jpackage --type app-image --name UniEar --app-version $packageVersion --input $inputDir `
             --main-jar desktop.jar --main-class uniear.desktop.DesktopAppKt --dest package
 
           $image = 'UniEar'
           if ($IsMacOS) {
             $image = 'UniEar.app'
             $plist = "package/$image/Contents/Info.plist"
+            & /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" $plist
             & /usr/libexec/PlistBuddy -c 'Add :NSBluetoothAlwaysUsageDescription string UniEar uses Bluetooth to control your headphones.' $plist
             codesign --force --deep --sign - "package/$image"
             & "./package/$image/Contents/MacOS/UniEar" --check-runtime
