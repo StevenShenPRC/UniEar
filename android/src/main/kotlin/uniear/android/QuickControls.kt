@@ -1,5 +1,6 @@
 package uniear.android
 
+import uniear.core.tr
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -22,6 +23,13 @@ import android.widget.RemoteViews
 import dev.hyperears.integration.NoiseMode
 import uniear.core.HeadsetView
 import uniear.core.label
+
+private fun NoiseMode.compactLabel(context: Context): String = context.getString(when (this) {
+    NoiseMode.ANC -> R.string.mode_anc
+    NoiseMode.TRANSPARENCY -> R.string.mode_transparency
+    NoiseMode.OFF -> R.string.mode_off
+    NoiseMode.WIND -> R.string.mode_wind
+})
 
 internal object QuickControls {
     const val NOTIFICATION_ID = 80
@@ -48,9 +56,9 @@ internal object QuickControls {
             Intent(context, ControlReceiver::class.java).setData(uri), FLAGS)
     }
 
-    fun notification(context: Context, view: HeadsetView, token: String, connecting: Boolean): Notification {
+    fun notification(context: Context, view: HeadsetView, token: String, connecting: Boolean, automatic: Boolean): Notification {
         val manager = requireNotNull(context.getSystemService(NotificationManager::class.java))
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, "耳机控制会话", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, tr("headphone_control_session"), NotificationManager.IMPORTANCE_LOW))
         val builder = Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_headphones)
             .setOnlyAlertOnce(true)
@@ -58,14 +66,14 @@ internal object QuickControls {
             .setContentIntent(openApp(context))
             .setVisibility(Notification.VISIBILITY_PRIVATE)
         if (Build.VERSION.SDK_INT >= 31) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-        if (connecting && Build.VERSION.SDK_INT >= 36 && Surface.LIVE_UPDATE.enabled(context)) {
+        if (connecting && Build.VERSION.SDK_INT >= 36 && (automatic || Surface.LIVE_UPDATE.enabled(context))) {
             val cancel = controlIntent(context, Surface.LIVE_UPDATE, token, CANCEL_CONNECTION)
-            return LiveUpdates.connectionNotification(builder, view, cancel)
+            return LiveUpdates.connectionNotification(builder, view, cancel, if (automatic) tr("bluetooth_connected") else tr("connecting_2"))
         }
         val showControls = Surface.NOTIFICATION.enabled(context)
         val text = if (showControls && view.ready) {
             listOfNotNull(view.mode?.label(), view.battery.label()).joinToString(" · ")
-        } else if (view.ready) "耳机控制会话正在运行" else "正在连接耳机…"
+        } else if (view.ready) tr("headphone_control_session_is_running") else tr("connecting_to_headphones")
         builder.setContentTitle(if (showControls) view.model ?: "UniEar" else "UniEar")
             .setContentText(text)
         if (showControls && view.ready) {
@@ -82,29 +90,30 @@ internal object QuickControls {
             for ((mode, id) in notificationModes) {
                 val supported = mode in view.modes
                 val selected = supported && mode == view.mode
-                setTextViewText(id, if (selected) "✓${mode.label()}" else mode.label())
+                val label = mode.compactLabel(context)
+                setTextViewText(id, if (selected) "✓$label" else label)
                 setTextColor(id, if (supported) Color.rgb(19, 54, 43) else Color.rgb(90, 101, 94))
                 setContentDescription(id, when {
-                    selected -> "${mode.label()}，当前模式"
-                    !supported -> "${mode.label()}，此耳机不支持"
+                    selected -> tr("0_current_mode", mode.label())
+                    !supported -> tr("0_not_supported_by_these_headphones", mode.label())
                     else -> mode.label()
                 })
                 setOnClickPendingIntent(id, if (supported) action(context, Surface.NOTIFICATION, mode, token) else null)
             }
             if (expanded) {
                 setTextViewText(R.id.notify_device, view.model ?: "UniEar")
-                setTextViewText(R.id.notify_mode, "当前模式  ${view.mode?.label() ?: "未知"}")
+                setTextViewText(R.id.notify_mode, tr("current_mode_0", view.mode?.label() ?: tr("unknown")))
                 setTextViewText(R.id.notify_battery, view.battery.label())
-                setTextViewText(R.id.notify_link, view.endpoint?.let { "控制通道  $it" } ?: view.status)
+                setTextViewText(R.id.notify_link, view.endpoint?.let { tr("control_channel_0", it) } ?: view.status)
             }
         }
     }
 
-    fun updateNotification(context: Context, view: HeadsetView, token: String, connecting: Boolean) {
+    fun updateNotification(context: Context, view: HeadsetView, token: String, connecting: Boolean, automatic: Boolean) {
         if (Build.VERSION.SDK_INT >= 33 &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         context.getSystemService(NotificationManager::class.java)
-            ?.notify(NOTIFICATION_ID, notification(context, view, token, connecting))
+            ?.notify(NOTIFICATION_ID, notification(context, view, token, connecting, automatic))
     }
 }
 
@@ -131,17 +140,17 @@ class EarbudTile : TileService() {
         val enabled = Surface.TILE.enabled(this)
         val view = ControlState.view
         qsTile?.apply {
-            label = "耳机模式"
+            label = tr("headphone_modes")
             state = when {
                 !enabled -> Tile.STATE_UNAVAILABLE
                 view.ready && view.modes.isNotEmpty() -> Tile.STATE_ACTIVE
                 else -> Tile.STATE_INACTIVE
             }
             if (Build.VERSION.SDK_INT >= 29) subtitle = when {
-                !enabled -> "UniEar 设置中已关闭"
-                !view.ready -> "打开 UniEar 连接"
-                view.modes.isEmpty() -> "该型号无可切换模式"
-                else -> view.mode?.label() ?: "点击切换"
+                !enabled -> tr("disabled_in_uniear_settings")
+                !view.ready -> tr("open_uniear_to_connect")
+                view.modes.isEmpty() -> tr("this_model_has_no_switchable_modes")
+                else -> view.mode?.label() ?: tr("tap_to_switch")
             }
             updateTile()
         }
@@ -189,8 +198,8 @@ class EarbudWidget : AppWidgetProvider() {
             return RemoteViews(context.packageName, R.layout.earbud_widget).apply {
                 setTextViewText(R.id.widget_title, if (active) view.model ?: "UniEar" else "UniEar")
                 setTextViewText(R.id.widget_status, when {
-                    !enabled -> "小组件控制已关闭"
-                    !active -> "点击连接耳机"
+                    !enabled -> tr("widget_controls_are_disabled")
+                    !active -> tr("tap_to_connect_headphones")
                     else -> listOfNotNull(view.mode?.label(), view.battery.label()).joinToString(" · ")
                 })
                 setOnClickPendingIntent(R.id.widget_header, QuickControls.openApp(context))
@@ -198,7 +207,8 @@ class EarbudWidget : AppWidgetProvider() {
                 for ((mode, id) in modeButtons) {
                     val supported = active && mode in view.modes
                     setViewVisibility(id, if (supported) View.VISIBLE else View.GONE)
-                    setTextViewText(id, if (mode == view.mode) "✓ ${mode.label()}" else mode.label())
+                    val label = mode.compactLabel(context)
+                    setTextViewText(id, if (mode == view.mode) "✓$label" else label)
                     setOnClickPendingIntent(id, if (supported && token != null)
                         QuickControls.action(context, Surface.WIDGET, mode, token) else null)
                 }

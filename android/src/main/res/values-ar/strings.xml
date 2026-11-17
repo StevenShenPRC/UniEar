@@ -1,0 +1,9 @@
+<resources>
+    <string name="tile_label">أوضاع السماعات</string>
+    <string name="widget_label">عناصر تحكم UniEar بالسماعات</string>
+    <string name="widget_connect">اضغط لتوصيل السماعات</string>
+    <string name="mode_anc">إلغاء</string>
+    <string name="mode_transparency">شفافية</string>
+    <string name="mode_off">إيقاف</string>
+    <string name="mode_wind">رياح</string>
+</resources>

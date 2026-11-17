@@ -2,8 +2,18 @@ name: Android APK
 
 on:
   push:
-    branches: [main, master, feature/android-experience]
+    branches: [main, master, feature/android-experience, feature/i18n, feature/pages-un-locales, fix/android-startup]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      require_release_signature:
+        type: boolean
+        default: true
+    secrets:
+      UNIEAR_KEYSTORE_BASE64:
+        required: true
+      UNIEAR_KEYSTORE_PASSWORD:
+        required: true
 
 permissions:
   contents: read
@@ -33,11 +43,16 @@ jobs:
       - name: Sign and verify release APK
         id: signing
         env:
+          REQUIRE_RELEASE_SIGNATURE: ${{ inputs.require_release_signature }}
           UNIEAR_KEYSTORE_BASE64: ${{ secrets.UNIEAR_KEYSTORE_BASE64 }}
           UNIEAR_KEYSTORE_PASSWORD: ${{ secrets.UNIEAR_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
           if [[ -z "$UNIEAR_KEYSTORE_BASE64" && -z "$UNIEAR_KEYSTORE_PASSWORD" ]]; then
+            if [[ "$REQUIRE_RELEASE_SIGNATURE" == 'true' ]]; then
+              echo '::error::Release signing secrets are required.'
+              exit 1
+            fi
             echo '::notice::Release signing secrets are absent. Only a debug APK will be uploaded.'
             echo 'signed=false' >> "$GITHUB_OUTPUT"
             exit 0
@@ -82,3 +97,36 @@ jobs:
           name: UniEar-android-debug
           path: android/build/outputs/apk/debug/android-debug.apk
           if-no-files-found: error
+
+  startup:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: UniEar-android-*
+          merge-multiple: true
+          path: apk
+      - name: Enable hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Launch UniEar and check it stays open
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install apk/*.apk
+            adb logcat -c
+            adb shell am start -W -n dev.uniear.app/uniear.android.MainActivity
+            sleep 3
+            adb logcat -b crash -d > startup-crash.log
+            cat startup-crash.log
+            if grep -F 'Process: dev.uniear.app' startup-crash.log; then exit 1; fi
+            adb shell pidof dev.uniear.app
+            adb shell dumpsys activity activities | grep -E '(topResumedActivity|mResumedActivity).*dev\.uniear\.app/uniear\.android\.MainActivity'

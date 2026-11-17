@@ -1,0 +1,9 @@
+<resources>
+    <string name="tile_label">耳机模式</string>
+    <string name="widget_label">UniEar 耳机控制</string>
+    <string name="widget_connect">点击连接耳机</string>
+    <string name="mode_anc">降噪</string>
+    <string name="mode_transparency">通透</string>
+    <string name="mode_off">关闭</string>
+    <string name="mode_wind">抗风噪</string>
+</resources>

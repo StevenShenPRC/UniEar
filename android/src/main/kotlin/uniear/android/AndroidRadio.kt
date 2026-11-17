@@ -1,5 +1,6 @@
 package uniear.android
 
+import uniear.core.tr
 import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
@@ -33,7 +34,7 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
     private val app = context.applicationContext
     private val adapter: BluetoothAdapter
         get() = app.getSystemService(BluetoothManager::class.java)?.adapter
-            ?.takeIf(BluetoothAdapter::isEnabled) ?: throw IOException("请先开启蓝牙")
+            ?.takeIf(BluetoothAdapter::isEnabled) ?: throw IOException(tr("turn_on_bluetooth_first"))
 
     override fun discover(): List<Headset> {
         val bluetooth = adapter
@@ -157,14 +158,14 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
     }
 
     private fun scan(timeout: Long, match: (BluetoothDevice, GattPeerIdentity) -> Boolean): BluetoothDevice? {
-        val scanner = adapter.bluetoothLeScanner ?: throw IOException("此设备的 BLE 扫描不可用")
+        val scanner = adapter.bluetoothLeScanner ?: throw IOException(tr("ble_scanning_is_unavailable_on_this_device"))
         val events = LinkedBlockingQueue<Result<ScanResult>>()
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 events.offer(Result.success(result))
             }
             override fun onScanFailed(errorCode: Int) {
-                events.offer(Result.failure(IOException("BLE 扫描失败（$errorCode）")))
+                events.offer(Result.failure(IOException(tr("ble_scan_failed_0", errorCode))))
             }
         }
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
@@ -202,12 +203,12 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
                     is GattPeerSelection.CompanionDevice -> {
                         scan(selection.scanTimeoutMs) { _, advertisement ->
                             selection.matchesPeer(headset, advertisement)
-                        } ?: throw IOException("找不到关联的 BLE 控制端点")
+                        } ?: throw IOException(tr("no_matching_ble_control_endpoint_was_found"))
                     }
                 }
                 GattLink(spec).apply { connect(app, peer) }
             }
-            is L2capEndpointSpec -> throw IOException("此版本的 Android 传输层未接入经典蓝牙 L2CAP")
+            is L2capEndpointSpec -> throw IOException(tr("classic_bluetooth_l2cap_is_unavailable_on_this"))
         }
     }
 
@@ -225,7 +226,7 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
         } catch (error: Exception) {
             runCatching { socket.close() }
             connect.cancel(true)
-            throw IOException(error.cause?.message ?: "RFCOMM 连接未完成", error)
+            throw IOException(error.cause?.message ?: tr("the_rfcomm_connection_did_not_complete"), error)
         }
     }
 
@@ -236,9 +237,9 @@ internal class AndroidRadio(context: Context) : HeadsetRadio {
             BluetoothDevice::class.java.getMethod(method, Int::class.javaPrimitiveType)
                 .invoke(device, spec.number) as BluetoothSocket
         } catch (error: InvocationTargetException) {
-            throw IOException(error.cause?.message ?: "固定 RFCOMM 通道不可用", error.cause ?: error)
+            throw IOException(error.cause?.message ?: tr("fixed_rfcomm_channel_unavailable"), error.cause ?: error)
         } catch (error: ReflectiveOperationException) {
-            throw IOException("系统未向此应用提供固定 RFCOMM 通道", error)
+            throw IOException(tr("the_system_did_not_expose_the_fixed"), error)
         }
     }
 
@@ -307,11 +308,11 @@ private class GattLink(private val spec: GattTransportSpec) : HeadsetLink {
 
     fun connect(context: Context, device: BluetoothDevice) {
         val link = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
-            ?: throw IOException("无法打开 GATT")
+            ?: throw IOException(tr("could_not_open_gatt"))
         gatt = link
         try {
             await("connect", 13)
-            check(link.discoverServices()) { "GATT 服务发现未启动" }
+            check(link.discoverServices()) { tr("gatt_service_discovery_did_not_start") }
             await("services", 10)
             val characteristics = link.services
                 .filter { spec.serviceUuid == null || it.uuid.toString().equals(spec.serviceUuid, true) }
@@ -319,16 +320,16 @@ private class GattLink(private val spec: GattTransportSpec) : HeadsetLink {
             val writeProperty = if (response) BluetoothGattCharacteristic.PROPERTY_WRITE
                 else BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE
             writer = select(characteristics, spec.writeCharacteristicUuid, spec.writeInstanceId, writeProperty)
-                ?: throw IOException("找不到 GATT 写入特征")
+                ?: throw IOException(tr("gatt_write_characteristic_not_found"))
             val reader = select(characteristics, spec.notifyCharacteristicUuid, spec.notifyInstanceId,
                 BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_INDICATE)
             if (reader == null) {
-                if (spec.notificationsRequired) throw IOException("找不到 GATT 通知特征")
+                if (spec.notificationsRequired) throw IOException(tr("gatt_notification_characteristic_not_found"))
             } else {
                 val descriptor = reader.getDescriptor(CCCD)
                 val enabled = link.setCharacteristicNotification(reader, true)
                 if (descriptor == null || !enabled) {
-                    if (spec.notificationsRequired) throw IOException("无法启用 GATT 通知")
+                    if (spec.notificationsRequired) throw IOException(tr("could_not_enable_gatt_notifications"))
                 } else {
                     val value = if (reader.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0)
                         BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
@@ -340,7 +341,7 @@ private class GattLink(private val spec: GattTransportSpec) : HeadsetLink {
                         link.writeDescriptor(descriptor)
                     }
                     if (started) await("descriptor", 7)
-                    else if (spec.notificationsRequired) throw IOException("无法订阅 GATT 通知")
+                    else if (spec.notificationsRequired) throw IOException(tr("could_not_subscribe_to_gatt_notifications"))
                 }
             }
         } catch (error: Exception) {
@@ -357,16 +358,16 @@ private class GattLink(private val spec: GattTransportSpec) : HeadsetLink {
     }
 
     private fun await(operation: String, timeout: Long) {
-        val reply = replies.poll(timeout, TimeUnit.SECONDS) ?: throw IOException("GATT $operation 超时")
+        val reply = replies.poll(timeout, TimeUnit.SECONDS) ?: throw IOException(tr("gatt_0_timed_out", operation))
         if (reply.operation != operation || reply.status != BluetoothGatt.GATT_SUCCESS) {
-            throw IOException("GATT $operation 失败（${reply.operation}，${reply.status}）")
+            throw IOException(tr("gatt_0_failed_1_2", operation, reply.operation, reply.status))
         }
     }
 
     override fun read(): ByteArray? = frames.take().takeIf(ByteArray::isNotEmpty)
 
     override fun write(frame: ByteArray) {
-        val link = gatt?.takeUnless { closed.get() } ?: throw IOException("GATT 已关闭")
+        val link = gatt?.takeUnless { closed.get() } ?: throw IOException(tr("gatt_is_closed"))
         val type = if (response) BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             else BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
         val started = if (Build.VERSION.SDK_INT >= 33) {
@@ -376,7 +377,7 @@ private class GattLink(private val spec: GattTransportSpec) : HeadsetLink {
             writer.value = frame
             link.writeCharacteristic(writer)
         }
-        if (!started) throw IOException("GATT 写入未启动")
+        if (!started) throw IOException(tr("gatt_write_did_not_start"))
         await("write", 7)
     }
 

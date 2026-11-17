@@ -1,5 +1,6 @@
 package uniear.android
 
+import uniear.core.tr
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -16,23 +17,30 @@ import uniear.core.HeadsetView
 import java.util.UUID
 
 internal enum class Surface(val key: String) {
-    NOTIFICATION("notification"), TILE("tile"), WIDGET("widget"), CAPSULE("capsule"), LIVE_UPDATE("live_update");
+    NOTIFICATION("notification"), TILE("tile"), WIDGET("widget"), CAPSULE("capsule"),
+    LIVE_UPDATE("live_update"), AUTO_CONNECT("auto_connect");
 
     fun enabled(context: Context): Boolean =
         context.getSharedPreferences("quick-controls", Context.MODE_PRIVATE).getBoolean(key, false)
 
     fun set(context: Context, enabled: Boolean) {
         context.getSharedPreferences("quick-controls", Context.MODE_PRIVATE).edit().putBoolean(key, enabled).apply()
-        if (this == LIVE_UPDATE && !enabled) LiveUpdates.dismissBluetoothConnection(context)
+        if (this == AUTO_CONNECT && !enabled) ControlState.service?.stopAutomaticAttempts()
+        if (!HeadsetConnection.enabled(context)) {
+            HeadsetConnection.clearOffer(context)
+            LiveUpdates.dismissBluetoothConnection(context)
+        }
         ControlState.refreshSurfaces(context)
     }
 }
 
+internal data class SessionRequest(val headset: Headset, val automatic: Boolean)
+
 /** Process-local state, read and written on the main thread by all Android entry points. */
 internal object ControlState {
-    var view = HeadsetView("先在系统中连接耳机，再查找已连接耳机。")
+    var view = HeadsetView(tr("connect_your_headphones_in_system_settings_then"))
         private set
-    private var pending: Headset? = null
+    private var pending: SessionRequest? = null
     var service: ControlSessionService? = null
     private val listeners = linkedSetOf<(HeadsetView) -> Unit>()
     val busy get() = pending != null || service?.active == true
@@ -56,19 +64,21 @@ internal object ControlState {
         EarbudTile.refresh(context)
     }
 
-    fun connect(context: Context, headset: Headset) {
-        if (busy) return
-        pending = headset
-        try {
+    fun connect(context: Context, headset: Headset, automatic: Boolean = false): Boolean {
+        if (busy) return false
+        pending = SessionRequest(headset, automatic)
+        return try {
             context.startForegroundService(Intent(context, ControlSessionService::class.java))
-            publish(context, HeadsetView("正在连接…", model = headset.identity.deviceName))
+            publish(context, HeadsetView(tr("connecting"), model = headset.identity.deviceName))
+            true
         } catch (error: RuntimeException) {
             pending = null
-            publish(context, HeadsetView(error.message ?: "无法启动耳机控制服务"))
+            publish(context, HeadsetView(error.message ?: tr("could_not_start_the_headphone_control_service")))
+            false
         }
     }
 
-    fun takePending(): Headset? = pending.also { pending = null }
+    fun takePending(): SessionRequest? = pending.also { pending = null }
 
     fun command(request: ControlRequest) {
         if (view.ready) service?.command(request)
@@ -91,6 +101,10 @@ internal object ControlState {
 class ControlSessionService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var session: HeadsetSession? = null
+    private var request: SessionRequest? = null
+    private var attempt = 0
+    private var retry: Runnable? = null
+    private var attemptDeadline: Runnable? = null
     private var connecting = false
     private var foreground = false
     private var foregroundLocation = false
@@ -100,48 +114,105 @@ class ControlSessionService : Service() {
     }
     internal var token: String? = null
         private set
-    internal val active get() = session != null
+    internal val active get() = token != null
 
     override fun onBind(intent: Intent?) = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val headset = ControlState.takePending()
-        if (headset == null) {
+        val next = ControlState.takePending()
+        if (next == null) {
             if (!active) stopSelf(startId)
             return START_NOT_STICKY
         }
         val generation = UUID.randomUUID().toString()
         token = generation
+        request = next
+        attempt = 0
         connecting = true
         ControlState.service = this
-        LiveUpdates.dismissBluetoothConnection(this)
+        HeadsetConnection.clearOffer(this)
         try {
-            val initial = HeadsetView("正在连接…", model = headset.identity.deviceName)
+            val initial = HeadsetView(if (next.automatic) tr("opening_the_uniear_control_channel") else tr("connecting"),
+                model = next.headset.identity.deviceName)
             enterForeground(initial, generation, false)
             foreground = true
-            session = HeadsetSession(AndroidRadio(this), headset) { view ->
-                main.post {
-                    if (token == generation) {
-                        if (view.ended) finish(view) else {
-                            if (view.ready) connecting = false
-                            ControlState.publish(this, view)
-                            automation.onHeadsetChanged(view)
-                        }
-                    }
-                }
+            LiveUpdates.dismissBluetoothConnection(this)
+            if (next.automatic && !Surface.AUTO_CONNECT.enabled(this)) {
+                finish(HeadsetView(tr("auto_connect_stopped"), model = next.headset.identity.deviceName))
+                return START_NOT_STICKY
             }
             ControlState.publish(this, initial)
             updateAutomation()
+            startAttempt(next, generation)
         } catch (error: RuntimeException) {
-            finish(HeadsetView(error.message ?: "无法建立控制会话"))
+            if (next.automatic) HeadsetConnection.showOffer(this, next.headset, tr("could_not_start_the_control_service_tap"))
+            finish(HeadsetView(error.message ?: tr("could_not_establish_a_control_session")))
         }
         return START_NOT_STICKY
+    }
+
+    private fun startAttempt(next: SessionRequest, generation: String) {
+        retry = null
+        val number = ++attempt
+        session = HeadsetSession(AndroidRadio(this), next.headset) { view ->
+            main.post {
+                if (token == generation && attempt == number && session != null) handleAttempt(next, generation, view)
+            }
+        }
+        if (next.automatic) {
+            val deadline = Runnable { failAutomaticAttempt(next, generation) }
+            attemptDeadline = deadline
+            main.postDelayed(deadline, 30_000)
+        }
+    }
+
+    private fun handleAttempt(next: SessionRequest, generation: String, view: HeadsetView) {
+        if (next.automatic && connecting && (view.ended || (view.ready && view.endpoint == null))) {
+            failAutomaticAttempt(next, generation)
+            return
+        }
+        if (view.ended) {
+            finish(view)
+            return
+        }
+        if (view.ready && connecting) {
+            connecting = false
+            clearAttemptDeadline()
+            if (next.automatic && view.endpoint != null) {
+                LiveUpdates.showBluetoothConnection(this, view.model, tr("uniear_can_now_control_these_headphones"), acquired = true)
+            }
+        }
+        ControlState.publish(this, view)
+        automation.onHeadsetChanged(view)
+    }
+
+    private fun failAutomaticAttempt(next: SessionRequest, generation: String) {
+        clearAttemptDeadline()
+        session?.close()
+        session = null
+        val model = next.headset.identity.deviceName
+        if (!Surface.AUTO_CONNECT.enabled(this)) {
+            finish(HeadsetView(tr("auto_connect_stopped"), model = model))
+        } else if (attempt >= MAX_AUTOMATIC_ATTEMPTS) {
+            LiveUpdates.showBluetoothConnection(this, model, tr("could_not_obtain_control_after_0_attempts", attempt))
+            finish(HeadsetView(tr("auto_connect_failed_retries_stopped"), model = model))
+        } else {
+            ControlState.publish(this, HeadsetView(tr("attempt_0_failed_waiting_to_retry", attempt), model = model))
+            val nextAttempt = Runnable { if (token == generation) startAttempt(next, generation) }
+            retry = nextAttempt
+            main.postDelayed(nextAttempt, 1_200L * attempt)
+        }
+    }
+
+    private fun clearAttemptDeadline() {
+        attemptDeadline?.let(main::removeCallbacks)
+        attemptDeadline = null
     }
 
     internal fun command(request: ControlRequest) { session?.control(request) }
 
     private fun enterForeground(view: HeadsetView, generation: String, location: Boolean) {
-        val notice = QuickControls.notification(this, view, generation, connecting)
+        val notice = QuickControls.notification(this, view, generation, connecting, request?.automatic == true)
         if (Build.VERSION.SDK_INT >= 29) {
             val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
                 (if (location) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
@@ -166,17 +237,28 @@ class ControlSessionService : Service() {
         }.onFailure { automation.close() }
     }
 
-    internal fun disconnect() = finish(HeadsetView("已断开控制连接"))
+    internal fun disconnect() = finish(HeadsetView(tr("control_connection_disconnected")))
 
     internal fun cancelConnection(generation: String) {
-        if (connecting && token == generation && Surface.LIVE_UPDATE.enabled(this)) {
-            finish(HeadsetView("已取消控制连接"))
+        if (connecting && token == generation && (request?.automatic == true || Surface.LIVE_UPDATE.enabled(this))) {
+            finish(HeadsetView(tr("control_connection_canceled")))
+        }
+    }
+
+    internal fun stopAutomaticAttempts() {
+        if (connecting && request?.automatic == true) finish(HeadsetView(tr("auto_connect_stopped")))
+    }
+
+    internal fun automaticHeadsetDisconnected(address: String) {
+        if (request?.automatic == true && request?.headset?.address == address) {
+            LiveUpdates.dismissBluetoothConnection(this)
+            finish(HeadsetView(tr("bluetooth_headphones_disconnected")))
         }
     }
 
     internal fun renderSurfaces() {
         val current = token ?: return
-        if (foreground) QuickControls.updateNotification(this, ControlState.view, current, connecting)
+        if (foreground) QuickControls.updateNotification(this, ControlState.view, current, connecting, request?.automatic == true)
         capsule.render(ControlState.view)
     }
 
@@ -189,6 +271,10 @@ class ControlSessionService : Service() {
     private fun closeSession() {
         token = null
         connecting = false
+        request = null
+        retry?.let(main::removeCallbacks)
+        retry = null
+        clearAttemptDeadline()
         automation.close()
         session?.close()
         session = null
@@ -203,8 +289,12 @@ class ControlSessionService : Service() {
         closeSession()
         if (ControlState.service === this) {
             ControlState.service = null
-            if (wasActive) ControlState.publish(this, HeadsetView("控制会话已结束"))
+            if (wasActive) ControlState.publish(this, HeadsetView(tr("control_session_ended")))
         }
         super.onDestroy()
+    }
+
+    private companion object {
+        const val MAX_AUTOMATIC_ATTEMPTS = 3
     }
 }
