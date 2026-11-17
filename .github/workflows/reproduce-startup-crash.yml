@@ -1,0 +1,42 @@
+name: Reproduce Android startup crash
+
+on:
+  push:
+    branches: [diagnostics/android-startup]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: UniEar-android-release
+          run-id: 43887041422
+          github-token: ${{ github.token }}
+          path: apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Capture launch exception from the original signed APK
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install apk/UniEar-release.apk
+            adb logcat -c
+            adb shell am start -n dev.uniear.app/uniear.android.MainActivity
+            sleep 4
+            adb logcat -b crash -d > crash.log
+            cat crash.log
+            grep -F 'java.util.regex.PatternSyntaxException' crash.log
+            grep -F 'uniear.core.Translations.<clinit>' crash.log
