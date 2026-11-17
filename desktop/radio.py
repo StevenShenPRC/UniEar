@@ -5,6 +5,7 @@ import base64
 import ctypes
 import os
 import re
+import shutil
 import socket
 import struct
 import subprocess
@@ -263,7 +264,22 @@ async def serve(write, disconnect):
 
 
 async def main(command, *args):
-    if command == "discover":
+    if command == "check":
+        from bleak import BleakClient, BleakScanner
+
+        if sys.platform == "win32":
+            from winrt.windows.devices.bluetooth import BluetoothDevice
+            from winrt.windows.devices.enumeration import DeviceInformation
+            ctypes.WinDLL("Ws2_32")
+        elif sys.platform.startswith("linux"):
+            if not shutil.which("bluetoothctl"):
+                raise RuntimeError("Install BlueZ (bluetoothctl)")
+        elif sys.platform == "darwin":
+            import CoreBluetooth
+        else:
+            raise RuntimeError(f"Unsupported desktop platform: {sys.platform}")
+        emit("READY", sys.platform)
+    elif command == "discover":
         await discover(*args)
     elif command == "battery":
         cached_battery(*args)

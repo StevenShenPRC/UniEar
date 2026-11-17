@@ -24,7 +24,7 @@ import dev.hyperears.integration.NoiseMode
 import uniear.core.HeadsetView
 import uniear.core.label
 
-private fun NoiseMode.compactLabel(context: Context): String = context.getString(when (this) {
+private fun NoiseMode.compactLabel(context: Context): String = AppLanguage.localize(context).getString(when (this) {
     NoiseMode.ANC -> R.string.mode_anc
     NoiseMode.TRANSPARENCY -> R.string.mode_transparency
     NoiseMode.OFF -> R.string.mode_off

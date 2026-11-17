@@ -1,0 +1,88 @@
+name: Desktop packages
+
+on:
+  push:
+    branches: [main]
+    paths: ['desktop/**', 'core/**', 'upstream/hyperears.rev', '.github/workflows/desktop.yml']
+  pull_request:
+    paths: ['desktop/**', 'core/**', 'upstream/hyperears.rev', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            platform: windows-x64
+          - runner: ubuntu-24.04
+            platform: linux-x64
+          - runner: macos-15
+            platform: macos-arm64
+          - runner: macos-15-intel
+            platform: macos-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install BlueZ command-line tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bluez
+      - run: python -m pip install -r desktop/requirements.txt
+      - run: python scripts/hyperears.py checkout
+      - name: Test and assemble desktop application
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            ./gradlew.bat --no-daemon -PdesktopOnly :core:test :desktop:installDist
+          } else {
+            sh ./gradlew --no-daemon -PdesktopOnly :core:test :desktop:installDist
+          }
+          exit $LASTEXITCODE
+      - name: Build and check native application image
+        shell: pwsh
+        env:
+          PACKAGE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $version = (Select-String -Path android/build.gradle.kts -Pattern 'versionName\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $inputDir = 'desktop/build/install/desktop/lib'
+          Copy-Item desktop/build/install/desktop/radio "$inputDir/radio" -Recurse
+          jpackage --type app-image --name UniEar --app-version $version --input $inputDir `
+            --main-jar desktop.jar --main-class uniear.desktop.DesktopAppKt --dest package
+
+          $image = 'UniEar'
+          if ($IsMacOS) {
+            $image = 'UniEar.app'
+            $plist = "package/$image/Contents/Info.plist"
+            & /usr/libexec/PlistBuddy -c 'Add :NSBluetoothAlwaysUsageDescription string UniEar uses Bluetooth to control your headphones.' $plist
+            codesign --force --deep --sign - "package/$image"
+            & "./package/$image/Contents/MacOS/UniEar" --check-runtime
+          } elseif ($IsWindows) {
+            $probe = Start-Process -FilePath './package/UniEar/UniEar.exe' -ArgumentList '--check-runtime' -WindowStyle Hidden -Wait -PassThru
+            if ($probe.ExitCode -ne 0) { throw "Desktop runtime check failed with exit code $($probe.ExitCode)." }
+          } else {
+            & ./package/UniEar/bin/UniEar --check-runtime
+          }
+
+          Copy-Item desktop/INSTALL.md package/INSTALL.md
+          tar -czf "UniEar-$env:PACKAGE_PLATFORM.tar.gz" -C package $image INSTALL.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UniEar-${{ matrix.platform }}
+          path: UniEar-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error

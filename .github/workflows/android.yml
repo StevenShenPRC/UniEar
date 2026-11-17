@@ -3,6 +3,8 @@ name: Android APK
 on:
   push:
     branches: [main]
+  pull_request:
+    paths: ['android/**', 'core/**', 'upstream/hyperears.rev', '.github/workflows/android.yml']
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -100,9 +102,16 @@ jobs:
 
   startup:
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [32, 36]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           pattern: UniEar-android-*
@@ -116,7 +125,7 @@ jobs:
       - name: Launch UniEar and check it stays open
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
-          api-level: 36
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           disable-animations: true
@@ -130,3 +139,4 @@ jobs:
             if grep -F 'Process: dev.uniear.app' startup-crash.log; then exit 1; fi
             adb shell pidof dev.uniear.app
             adb shell dumpsys activity activities | grep -E '(topResumedActivity|mResumedActivity).*dev\.uniear\.app/uniear\.android\.MainActivity'
+            python3 scripts/check-android-language.py

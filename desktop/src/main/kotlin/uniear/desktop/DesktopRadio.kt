@@ -5,11 +5,11 @@ import dev.hyperears.integration.*
 import uniear.core.Headset
 import uniear.core.HeadsetLink
 import uniear.core.HeadsetRadio
+import uniear.core.Translations
 import uniear.core.matchesPeer
 import java.io.File
 import java.io.IOException
 import java.util.Base64
-import java.util.Locale
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -19,18 +19,33 @@ internal class DesktopRadio : HeadsetRadio {
     private val platform = System.getProperty("os.name")
     private val windows = platform.startsWith("Windows")
     private val python = System.getenv("UNIEAR_PYTHON") ?: if (windows) "python" else "python3"
+    private val archiveDirectory = File(DesktopRadio::class.java.protectionDomain.codeSource.location.toURI()).parentFile
     private val script = sequenceOf(
         System.getenv("UNIEAR_RADIO")?.let(::File),
         File("desktop/radio.py"),
-        File(File(DesktopRadio::class.java.protectionDomain.codeSource.location.toURI())
-            .parentFile.parentFile, "radio/radio.py"),
+        File(archiveDirectory, "radio/radio.py"),
+        File(archiveDirectory.parentFile, "radio/radio.py"),
     ).filterNotNull().firstOrNull(File::isFile)
 
     private fun start(vararg args: String): Process {
         val helper = script ?: throw IOException(tr("desktop_bluetooth_helper_radio_py_not_found"))
         return ProcessBuilder(listOf(python, "-u", helper.absolutePath) + args)
-            .apply { environment()["UNIEAR_LOCALE"] = Locale.getDefault().language }
+            .apply { environment()["UNIEAR_LOCALE"] = Translations.locale.language }
             .redirectError(ProcessBuilder.Redirect.INHERIT).start()
+    }
+
+    fun checkRuntime(): String {
+        val helper = start("check")
+        try {
+            check(helper.waitFor(15, TimeUnit.SECONDS)) { tr("bluetooth_operation_timed_out") }
+            val result = helper.inputStream.bufferedReader(Charsets.UTF_8).use { it.readLine().orEmpty() }
+            check(helper.exitValue() == 0 && result.startsWith("READY\t")) {
+                if (result.startsWith("ERR\t")) decode(result.substringAfter('\t')) else result
+            }
+            return result
+        } finally {
+            helper.destroyForcibly()
+        }
     }
 
     override fun discover(): List<Headset> = discoverPeers()
