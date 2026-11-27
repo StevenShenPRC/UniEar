@@ -9,6 +9,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -51,8 +52,24 @@ class MainActivity : Activity() {
     private var scanning = false
     private var permissionAction: (() -> Unit)? = null
     private var settingsSelected = false
+    private var pendingAutoCheck = false
+    private var resumed = false
+    private var awaitingPermissionResult = false
     private val renderView: (HeadsetView) -> Unit = ::render
 
+    private enum class ThemeMode(val key: String) {
+        SYSTEM("system"),
+        LIGHT("light"),
+        DARK("dark");
+
+        fun label(): String = when (this) {
+            SYSTEM -> tr("follow_system_theme")
+            LIGHT -> tr("off")
+            DARK -> tr("on")
+        }
+    }
+
+    private var themeMode = ThemeMode.SYSTEM
     private var dark = false
     private val backgroundColor get() = if (dark) Color.rgb(16, 26, 22) else Color.rgb(242, 245, 240)
     private val cardColor get() = if (dark) Color.rgb(26, 39, 33) else Color.WHITE
@@ -63,13 +80,18 @@ class MainActivity : Activity() {
     private val onAccent get() = if (dark) Color.rgb(15, 52, 43) else Color.WHITE
     private var availableHeadsets: List<Headset> = emptyList()
 
-    private data class DeviceSelection(val devices: List<Headset>, val address: String?)
+    private data class DeviceSelection(
+        val devices: List<Headset>,
+        val address: String?,
+        val pendingAutoCheck: Boolean,
+    )
 
     override fun attachBaseContext(base: Context) = super.attachBaseContext(AppLanguage.localize(base))
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppLanguage.update(applicationContext)
-        dark = getPreferences(MODE_PRIVATE).getBoolean("dark_mode", false)
+        themeMode = selectedThemeMode()
+        dark = resolveDark(themeMode)
         setTheme(if (dark) R.style.UniEarDarkTheme else R.style.UniEarTheme)
         super.onCreate(savedInstanceState)
         val root = column().apply {
@@ -101,11 +123,19 @@ class MainActivity : Activity() {
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         selectPage(savedInstanceState?.getBoolean("settings") == true)
-        (lastNonConfigurationInstance as? DeviceSelection)?.let { showHeadsets(it.devices, it.address) }
+        val retained = lastNonConfigurationInstance as? DeviceSelection
+        pendingAutoCheck = retained?.pendingAutoCheck ?: true
+        retained?.let { showHeadsets(it.devices, it.address) }
     }
 
     override fun onRetainNonConfigurationInstance(): Any =
-        DeviceSelection(availableHeadsets, (devices.selectedItem as? Headset)?.address)
+        DeviceSelection(availableHeadsets, (devices.selectedItem as? Headset)?.address, pendingAutoCheck)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingAutoCheck = true
+    }
 
     override fun onStart() {
         super.onStart()
@@ -114,14 +144,25 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumed = true
         ControlState.refreshSurfaces(this)
         ControlState.service?.updateAutomation()
         updateSettingsStatus()
         renderNetworkRules()
+        if (pendingAutoCheck) {
+            pendingAutoCheck = false
+            autoCheckAndConnect()
+        }
+    }
+
+    override fun onPause() {
+        resumed = false
+        super.onPause()
     }
 
     override fun onStop() {
         ControlState.remove(renderView)
+        if (!isChangingConfigurations && !awaitingPermissionResult) pendingAutoCheck = true
         super.onStop()
     }
 
@@ -193,17 +234,7 @@ class MainActivity : Activity() {
                 java.util.Locale.forLanguageTag(it.key).language == language?.language
             }?.value ?: tr("follow_system_language")
             addView(action(tr("language_setting", label)) { selectLanguage() })
-            addView(Switch(this@MainActivity).apply {
-                text = tr("dark_mode")
-                textSize = 16f
-                setTextColor(ink)
-                minHeight = dp(48)
-                isChecked = dark
-                setOnCheckedChangeListener { _, enabled ->
-                    getPreferences(MODE_PRIVATE).edit().putBoolean("dark_mode", enabled).apply()
-                    recreate()
-                }
-            })
+            addView(action(tr("dark_mode_setting", themeMode.label())) { selectTheme() })
         })
         page.addView(card().apply {
             addView(text(tr("network_automation"), 21, bold = true))
@@ -275,6 +306,46 @@ class MainActivity : Activity() {
                         ControlState.refreshSurfaces(this)
                         recreate()
                     }
+                }
+            }
+            .setNegativeButton(tr("cancel"), null)
+            .show()
+    }
+
+    private fun selectedThemeMode(): ThemeMode {
+        val prefs = getPreferences(MODE_PRIVATE)
+        val saved = prefs.getString("theme_mode", null)
+        if (saved != null) {
+            return ThemeMode.entries.firstOrNull { it.key == saved } ?: ThemeMode.SYSTEM
+        }
+        return if (prefs.contains("dark_mode")) {
+            if (prefs.getBoolean("dark_mode", false)) ThemeMode.DARK else ThemeMode.LIGHT
+        } else ThemeMode.SYSTEM
+    }
+
+    private fun isSystemDark(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    private fun resolveDark(mode: ThemeMode): Boolean = when (mode) {
+        ThemeMode.SYSTEM -> isSystemDark()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+
+    private fun selectTheme() {
+        val choices = ThemeMode.entries
+        val index = choices.indexOf(themeMode)
+        val labels = choices.map { it.label() }.toTypedArray()
+        AlertDialog.Builder(this).setTitle(tr("dark_mode"))
+            .setSingleChoiceItems(labels, index) { dialog, selected ->
+                dialog.dismiss()
+                val next = choices[selected]
+                if (next != themeMode) {
+                    getPreferences(MODE_PRIVATE).edit()
+                        .putString("theme_mode", next.key)
+                        .remove("dark_mode")
+                        .apply()
+                    recreate()
                 }
             }
             .setNegativeButton(tr("cancel"), null)
@@ -355,6 +426,7 @@ class MainActivity : Activity() {
             val permissions = if (Build.VERSION.SDK_INT >= 31)
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            awaitingPermissionResult = true
             requestPermissions(permissions, 3)
         } else if (!canReadWifiName()) {
             startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
@@ -387,6 +459,7 @@ class MainActivity : Activity() {
     private fun askNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED) {
+            awaitingPermissionResult = true
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
         }
     }
@@ -455,6 +528,26 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun autoCheckAndConnect() {
+        if (ControlState.busy || scanning) return
+        if (missingBluetoothPermissions(forControl = false).isNotEmpty()) return
+        queryHeadsets { peers ->
+            if (peers.isEmpty()) {
+                status.text = tr("no_connected_headphones_found_connect_them_in")
+                return@queryHeadsets
+            }
+            val target = devices.selectedItem as? Headset ?: return@queryHeadsets
+            if (missingBluetoothPermissions(forControl = true).isNotEmpty()) {
+                status.text = tr("connected_headphones_found_0", peers.size)
+            } else if (!ControlState.busy && resumed && !isFinishing && !isDestroyed) {
+                getPreferences(MODE_PRIVATE).edit().putString("last_address", target.address).apply()
+                ControlState.connect(this, target)
+            } else if (!ControlState.busy) {
+                status.text = tr("headphones_found_return_to_devices_and_tap")
+            }
+        }
+    }
+
     private fun discover() = queryHeadsets { peers ->
         status.text = if (peers.isEmpty()) tr("no_connected_headphones_found_connect_them_in")
             else tr("connected_headphones_found_0", peers.size)
@@ -470,13 +563,15 @@ class MainActivity : Activity() {
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 scanning = false
-                result.onSuccess { peers ->
-                    val selected = (devices.selectedItem as? Headset)?.address
-                    showHeadsets(peers, selected ?: getPreferences(MODE_PRIVATE).getString("last_address", null))
-                    onResult(peers)
-                }.onFailure {
-                    showHeadsets(emptyList(), null)
-                    status.text = it.message ?: tr("could_not_read_bluetooth_connection_status")
+                if (!ControlState.busy) {
+                    result.onSuccess { peers ->
+                        val selected = (devices.selectedItem as? Headset)?.address
+                        showHeadsets(peers, selected ?: getPreferences(MODE_PRIVATE).getString("last_address", null))
+                        onResult(peers)
+                    }.onFailure {
+                        showHeadsets(emptyList(), null)
+                        status.text = it.message ?: tr("could_not_read_bluetooth_connection_status")
+                    }
                 }
                 buttons()
             }
@@ -500,7 +595,9 @@ class MainActivity : Activity() {
         devices.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, peers).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
-        val index = peers.indexOfFirst { it.address == address }
+        val index = peers.indexOfFirst { it.address == address }.takeIf { it >= 0 }
+            ?: peers.indexOfFirst(HeadsetConnection::canControl).takeIf { it >= 0 }
+            ?: if (peers.isNotEmpty()) 0 else -1
         if (index >= 0) devices.setSelection(index)
     }
 
@@ -572,19 +669,25 @@ class MainActivity : Activity() {
         style(connect, true)
     }
 
-    private fun withBluetooth(forControl: Boolean, action: () -> Unit) {
+    private fun missingBluetoothPermissions(forControl: Boolean): List<String> {
         val wanted = if (Build.VERSION.SDK_INT >= 31) {
             if (forControl) arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
             else arrayOf(Manifest.permission.BLUETOOTH_CONNECT)
         } else if (forControl) arrayOf(Manifest.permission.ACCESS_FINE_LOCATION) else emptyArray()
-        val missing = wanted.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        return wanted.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+    }
+
+    private fun withBluetooth(forControl: Boolean, action: () -> Unit) {
+        val missing = missingBluetoothPermissions(forControl)
         if (missing.isEmpty()) action() else {
             permissionAction = action
+            awaitingPermissionResult = true
             requestPermissions(missing.toTypedArray(), 1)
         }
     }
 
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
+        awaitingPermissionResult = false
         super.onRequestPermissionsResult(code, permissions, results)
         if (code == 1) {
             val action = permissionAction ?: ::discover
