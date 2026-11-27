@@ -2,11 +2,10 @@ name: GitHub Release
 
 on:
   push:
-    tags: ['v*']
-    branches: [feature/release-docs]
-    paths:
-      - '.github/workflows/release.yml'
-      - '.github/workflows/android.yml'
+    branches: [main]
+    tags: ['v*', 'beta-v*']
+  pull_request:
+    paths: ['.github/workflows/release.yml', 'scripts/release_version.py', 'scripts/test_release_version.py']
   workflow_dispatch:
 
 permissions:
@@ -20,33 +19,26 @@ jobs:
   version:
     runs-on: ubuntu-24.04
     outputs:
+      enabled: ${{ steps.version.outputs.enabled }}
+      publish: ${{ steps.version.outputs.publish }}
       tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Validate the release version
+      - name: Test release rules
+        run: python3 -m unittest discover -s scripts -p test_release_version.py
+      - name: Resolve release version
         id: version
         env:
+          EVENT_NAME: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
-        run: |
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
+        run: python3 scripts/release_version.py
 
-          gradle = Path('android/build.gradle.kts').read_text()
-          version = re.search(r'^\s*versionName\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*$', gradle, re.M)
-          if not version:
-              raise SystemExit('Android versionName must be MAJOR.MINOR.PATCH')
-          tag = f'v{version[1]}'
-          if os.environ['REF_TYPE'] == 'tag' and os.environ['REF_NAME'] != tag:
-              raise SystemExit(f'Tag must match Android versionName: {tag}')
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write(f'tag={tag}\n')
-          PY
   build:
+    if: needs.version.outputs.enabled == 'true' && github.event_name != 'pull_request'
     needs: version
     uses: ./.github/workflows/android.yml
     with:
@@ -54,28 +46,44 @@ jobs:
     secrets:
       UNIEAR_KEYSTORE_BASE64: ${{ secrets.UNIEAR_KEYSTORE_BASE64 }}
       UNIEAR_KEYSTORE_PASSWORD: ${{ secrets.UNIEAR_KEYSTORE_PASSWORD }}
+
   publish:
+    if: needs.version.outputs.publish == 'true'
     needs: [version, build]
-    if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: UniEar-android-release
-      - name: Publish the verified APK and checksum
+      - name: Publish APK and checksum
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.version.outputs.tag }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
           set -euo pipefail
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$GITHUB_SHA" || {
+              echo '::error::Release tag already belongs to another commit.'
+              exit 1
+            }
+          fi
           apk="UniEar-${TAG}-android.apk"
           mv UniEar-release.apk "$apk"
           sha256sum "$apk" > "$apk.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "::notice::Release $TAG already exists. Its assets were left intact."
-          else
-            gh release create "$TAG" "$apk" "$apk.sha256" --verify-tag --generate-notes --title "UniEar $TAG"
+            exit 0
           fi
+          options=(--target "$GITHUB_SHA" --generate-notes --title "UniEar $TAG")
+          if [[ "$PRERELEASE" == 'true' ]]; then
+            options+=(--prerelease --latest=false)
+          fi
+          gh release create "$TAG" "$apk" "$apk.sha256" "${options[@]}"
